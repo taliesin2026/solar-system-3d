@@ -1,0 +1,3599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>太阳系 3D 模拟器 · Sun-Earth-Moon System</title>
+<style>
+  :root{
+    --bg:#05070f; --panel:rgba(14,18,32,.82); --line:rgba(120,160,220,.18);
+    --txt:#dfe7f5; --sub:#8fa0bd; --accent:#5eb3ff; --warn:#ffb45e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--txt);
+    font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;}
+  canvas{display:block}
+  #app{position:fixed;inset:0}
+
+  .panel{position:fixed;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:10;transition:opacity .3s}
+  /* 面板「让位」态：有天体运行到面板正后方时，面板变半透明并把
+     悬浮/点击事件让给 3D 画布（pointer-events:none），天体划出后自动恢复。 */
+  .panel.ghost{opacity:.15;pointer-events:none}
+  /* 左栏：紧凑到一屏放得下，不再需要滚动。
+     max-height 兜底，窗口很矮时才会出现滚动条。 */
+  #left{left:14px;top:14px;width:262px;max-height:calc(100vh - 116px);overflow-y:auto;
+    scrollbar-width:thin}
+  #left::-webkit-scrollbar{width:5px}
+  #left::-webkit-scrollbar-thumb{background:rgba(120,160,220,.25);border-radius:3px}
+  #right{right:14px;top:14px;width:250px;max-height:calc(100vh - 116px);overflow-y:auto;
+    scrollbar-width:thin}
+  #right::-webkit-scrollbar{width:5px}
+  #right::-webkit-scrollbar-thumb{background:rgba(120,160,220,.25);border-radius:3px}
+
+  /* 底部横条：把「视角/比例」和「显示开关」从左栏挪下来横向排布。
+     这样左栏高度砍掉近一半，且这两组控件本身是横向的，横排更贴合内容形状。 */
+  #bottom{position:fixed;left:14px;right:14px;bottom:14px;z-index:10;
+    display:flex;align-items:stretch;gap:10px;
+    pointer-events:none}
+  #bottom > *{pointer-events:auto}
+  .bcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 8px 32px rgba(0,0,0,.5);padding:9px 13px;
+    flex:0 0 auto}                 /* 按内容宽度，不被拉伸 */
+  /* hud 卡用 margin-left:auto 顶到最右，不需要额外的占位元素 */
+  #hud{margin-left:auto}
+  .bcard .lbl{margin-bottom:6px}
+  /* 比例区：横向三块 */
+  #bRatio{display:flex;gap:14px;align-items:flex-start}
+  #bRatio .grp{display:flex;flex-direction:column;gap:5px}
+  #bRatio .grp > .lbl{margin-bottom:0}
+  /* 开关区：横排，勾选项挤成一行 */
+  #bToggles{display:flex;flex-wrap:wrap;gap:3px 12px;align-content:flex-start;
+    max-width:520px}
+  #bToggles .ck{padding:2px 0}
+  /* 星球大小滑块给固定宽度，避免它把整条撑开 */
+  #bSize{width:172px}
+  #bSize input[type=range]{margin:2px 0 0}
+
+  @media(max-width:1180px){
+    /* 窄屏：底部横条换行，避免挤成一条缝 */
+    #bottom{flex-wrap:wrap}
+    #bToggles{max-width:none}
+  }
+  @media(max-width:900px){#right{display:none}}
+
+  .hd{padding:10px 14px;font-size:13px;font-weight:700;letter-spacing:.5px;
+    border-bottom:1px solid var(--line);display:flex;align-items:center;gap:7px}
+  .hd .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 9px var(--accent)}
+  /* 左栏段落压紧：11px→8px 纵向内边距，一屏能省出两指高度 */
+  .sec{padding:9px 14px;border-bottom:1px solid var(--line)}
+  .sec:last-child{border-bottom:none}
+  .lbl{font-size:10.5px;color:var(--sub);letter-spacing:.6px;margin-bottom:6px;
+    text-transform:uppercase;font-weight:600}
+
+  .row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
+  .row:last-child{margin-bottom:0}
+  .row span{font-size:12px;color:var(--txt)}
+  .val{font-size:11px;color:var(--warn);font-variant-numeric:tabular-nums;
+    font-family:Consolas,monospace;min-width:56px;text-align:right}
+
+  input[type=range]{-webkit-appearance:none;width:100%;height:3px;border-radius:2px;
+    background:linear-gradient(90deg,var(--accent) var(--p,50%),rgba(255,255,255,.12) var(--p,50%));
+    outline:none;margin:3px 0 8px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;
+    border-radius:50%;background:#fff;cursor:pointer;box-shadow:0 0 0 3px rgba(94,179,255,.28)}
+  input[type=range]::-moz-range-thumb{width:13px;height:13px;border:none;border-radius:50%;
+    background:#fff;cursor:pointer}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;
+    padding:6px 9px;font-size:11.5px;color:var(--txt);background:rgba(94,179,255,.10);
+    border:1px solid rgba(94,179,255,.30);border-radius:7px;cursor:pointer;transition:.16s;
+    user-select:none;white-space:nowrap}
+  .btn:hover{background:rgba(94,179,255,.22);border-color:rgba(94,179,255,.55)}
+  .btn.on{background:var(--accent);color:#04101f;border-color:var(--accent);font-weight:700}
+  .btn.wide{flex:1}
+  .brow{display:flex;gap:6px;flex-wrap:wrap}
+  .brow.c3 > .btn{flex:1 1 0;min-width:0}
+  /* 鼠标操作提示行：随平移模式切换而变，告知当前左键到底干什么。
+     用等宽小字 + 弱化颜色，避免和按钮抢视觉层级。 */
+  .ckline{font-size:9.5px;color:var(--sub);line-height:1.5;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+
+  /* 平移方向盘。宽度收窄到 104px —— 原本 126px 是为单独占一行设计的，
+     现在与「俯视/侧视/重置」横排共处，要给右侧按钮留位置。 */
+  .padgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;
+    width:104px;margin:0 auto}
+  .pad{height:26px;display:flex;align-items:center;justify-content:center;
+    background:rgba(94,179,255,.08);border:1px solid rgba(94,179,255,.22);
+    border-radius:7px;cursor:pointer;font-size:11px;color:var(--txt);
+    transition:.10s;user-select:none}
+  .pad:hover{background:rgba(94,179,255,.24);border-color:rgba(94,179,255,.5)}
+  .pad:active,.pad.on{background:var(--accent);color:#04101f;border-color:var(--accent)}
+  .pad.mid{background:rgba(255,255,255,.04);border-color:var(--line);
+    cursor:default;font-size:12px;color:var(--sub)}
+  .pad.mid:hover{background:rgba(255,255,255,.06)}
+  .pad.up{grid-area:1/2} .pad.left{grid-area:2/1} .pad.mid{grid-area:2/2}
+  .pad.right{grid-area:2/3} .pad.down{grid-area:3/2}
+
+  .ck{display:flex;align-items:center;gap:8px;cursor:pointer;padding:3px 0;
+    font-size:12px;user-select:none}
+  .ck i{width:14px;height:14px;border-radius:4px;border:1.5px solid rgba(140,175,230,.4);
+    display:flex;align-items:center;justify-content:center;flex:0 0 auto;transition:.15s}
+  .ck.on i{background:var(--accent);border-color:var(--accent)}
+  .ck.on i::after{content:"";width:7px;height:4px;border-left:2px solid #04101f;
+    border-bottom:2px solid #04101f;transform:rotate(-45deg) translate(1px,-1px)}
+  .ck:hover i{border-color:var(--accent)}
+  .ck span em{font-style:normal;opacity:.5;margin-left:4px;font-size:11px}
+
+  /* 天体列表：两列。分类标题压成极扁的一行（原设计有边框 + 计数徽章 +
+     上下内边距，四行标题就吃掉 60px，在矮窗口里会把「行星矮星」挤出视口）。 */
+  .plist{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  .cat{grid-column:1/-1;display:flex;align-items:center;gap:5px;
+    font-size:9.5px;color:var(--sub);letter-spacing:.5px;font-weight:600;
+    padding:1px 2px 0;margin-top:1px}
+  .cat:first-child{margin-top:0;padding-top:0}
+  .cat i{font-style:normal;font-size:9.5px;color:var(--accent);width:11px;text-align:center}
+  .cat u{margin-left:auto;text-decoration:none;font-size:9px;opacity:.45;
+    font-family:Consolas,monospace}
+  .pl{display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:6px;cursor:pointer;
+    font-size:11px;border:1px solid transparent;transition:.14s;background:rgba(255,255,255,.03)}
+  .pl:hover{background:rgba(94,179,255,.14);border-color:rgba(94,179,255,.3)}
+  .pl.sel{background:rgba(94,179,255,.26);border-color:var(--accent);font-weight:700}
+  .pl em{width:8px;height:8px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 5px currentColor}
+
+  #labels{position:fixed;inset:0;pointer-events:none;z-index:5;overflow:hidden}
+  .lab{position:absolute;font-size:10.5px;color:#cfe0f5;transform:translate(-50%,-140%);
+    white-space:nowrap;text-shadow:0 1px 4px #000,0 0 10px rgba(0,0,0,.9);letter-spacing:.3px;
+    transition:opacity .2s}
+  .lab b{font-weight:600}
+  .lab i{font-style:normal;opacity:.62;font-size:9px;margin-left:3px}
+  .lab.hl{color:#fff;font-size:11.5px}
+  .lab.hl b{font-weight:700;text-shadow:0 1px 5px #000,0 0 14px rgba(94,179,255,.9)}
+
+  /* 悬浮提示卡 */
+  #tip{position:absolute;transform:translate(-50%,-100%);opacity:0;pointer-events:none;
+    background:rgba(10,14,26,.92);border:1px solid rgba(94,179,255,.45);border-radius:9px;
+    padding:8px 11px;font-size:11.5px;line-height:1.65;white-space:nowrap;
+    box-shadow:0 6px 22px rgba(0,0,0,.65);transition:opacity .13s;z-index:6}
+  #tip::after{content:"";position:absolute;left:50%;bottom:-5px;width:8px;height:8px;
+    margin-left:-4px;background:rgba(10,14,26,.92);
+    border-right:1px solid rgba(94,179,255,.45);border-bottom:1px solid rgba(94,179,255,.45);
+    transform:rotate(45deg)}
+  #tip .tn{font-size:13px;font-weight:700;color:#fff;letter-spacing:.5px}
+  #tip .tr{color:var(--sub);font-size:10.5px;margin:1px 0 4px}
+  #tip .tk{color:var(--sub);display:inline-block;min-width:52px}
+  #tip .tv{color:#fff;font-family:Consolas,monospace;float:right;margin-left:12px}
+  #tip .thint{color:var(--accent);font-size:10px;margin-top:4px;opacity:.85}
+
+  #app.hovering{cursor:pointer}
+
+  /* hud 不再是浮在画面中央的独立条 —— 那会挡住太阳系主体。
+   它现在是底部横条里的第三块卡片，随条一起排布。
+   操作提示压缩成单行小字，放右栏底部，不再浮在 3D 画面上。 */
+  #hud{display:flex;align-items:center;gap:10px;padding:0 2px;
+    font-size:12.5px;white-space:nowrap}
+  #hud .date{font-family:Consolas,monospace;color:var(--accent);font-weight:700;
+    letter-spacing:.5px;font-size:13px}
+  #hud .sep{width:1px;height:16px;background:var(--line)}
+  #hud .sm{font-size:11px;color:var(--sub)}
+  #tp{flex:1;min-width:130px}
+
+  #info{font-size:11.5px;line-height:1.75}
+  #info .k{color:var(--sub)}
+  #info .v{float:right;font-family:Consolas,monospace;color:#fff}
+  #info .nm{font-size:15px;font-weight:700;margin-bottom:7px;letter-spacing:.5px}
+  #info .sub2{font-size:10.5px;color:var(--sub);margin:-5px 0 9px}
+  #note{font-size:9.5px;color:var(--sub);line-height:1.6;padding:7px 14px;
+    border-top:1px solid var(--line);background:rgba(255,180,94,.05)}
+  #note b{color:var(--warn)}
+
+  /* 操作提示压缩成单行小字，作为右栏的最后一段。
+     原先是 fixed 浮在画面右下，现在放在 #right 面板内不再遮挡 3D 主体。 */
+  #viewtip{font-size:9.5px;color:var(--sub);line-height:1.75;pointer-events:none;
+    padding:8px 14px;border-top:1px solid var(--line);margin-top:2px}
+  kbd{background:rgba(255,255,255,.1);border:1px solid var(--line);border-radius:4px;
+    padding:0 4px;font-size:9.5px;font-family:Consolas,monospace}
+
+  /* ============================================================
+     响应式覆盖 —— 必须放在 CSS 末尾。
+     之前这些规则写在文件前部，而基础规则（.plist 等）在它们之后定义，
+     同特异度下后写的赢，导致矮窗口三列布局根本没生效。
+     媒体查询只是「在特定条件下追加覆盖」，位置必须在被覆盖的规则之后。
+     ============================================================ */
+
+  /* 矮窗口（笔记本 768/800 高的浏览器）：左栏放不下全部内容。
+     砍掉最次要的部分 —— 「跳转日期」整行和底部说明条，
+     优先保住天体列表（那是切天体的主入口，不能被挤掉）。 */
+  @media(max-height:860px){
+    #note{display:none}
+    #dDate, #dDateRow{display:none}
+    .sec{padding:7px 14px}
+    #bToggles .ck{font-size:10.5px}
+    #bRatio{gap:10px}
+  }
+  /* 940px 档（覆盖 1440×900 —— 最常见的桌面分辨率）。
+     900 > 860，所以下面那条 860 档对它是完全不生效的，左栏用默认两列列表
+     排 6 行，实测溢出 45px。列表改三列正好省下约 44px（6 行 → 4 行），
+     且此高度仍宽裕，不需要动分类标题。 */
+  @media(max-height:940px){
+    .plist{grid-template-columns:1fr 1fr 1fr;gap:3px}
+    .pl{font-size:10.5px;padding:3px 5px;gap:4px}
+    .pl em{width:7px;height:7px}
+  }
+  /* 更矮：天体列表改三列。11 个天体 + 4 个分类标题，两列要9 行，
+     在749px 高的窗口里最后几个（海王星、矮行星）会被裁掉看不见 ——
+     而那正是切天体的主入口。三列压到 6 行就能全露。 */
+  @media(max-height:820px){
+    #left{width:252px}
+    .plist{grid-template-columns:1fr 1fr 1fr;gap:3px}
+    .pl{font-size:10px;padding:3px 5px;gap:4px}
+    .pl em{width:7px;height:7px}
+    .cat{font-size:9px;padding:0 2px}
+    .pad{height:22px}
+    /* 视角控制段的三个按钮挤成两行会多占 26px，改成只留图标+短文案 */
+    .lbl{margin-bottom:4px}
+    input[type=range]{margin:2px 0 5px}
+    .row{margin-bottom:5px}
+  }
+  /* 760px 档（覆盖 1384×749 这类高度）。
+     749 > 740，所以下面那条 740 档对它是**不生效**的，天体列表仍是
+     820 档的三列布局，而新加的「平移模式」按钮又占掉一行——
+     实测左栏溢出 42px、第 11 个天体（月球）被裁掉。
+     这里把鼠标提示行隐去（内容是操作说明，不是控件，少一屏可见），
+     并把机位/平移两组按钮压成同一行。 */
+  @media(max-height:760px){
+    #mouseHint{display:none}
+    .brow{margin-top:0 !important}
+    .sec{padding:6px 12px}
+  }
+  /* 740px 档（覆盖 1280×720 —— 最常见的小笔记本分辨率）。
+     断点必须 ≥ 视口高度，否则规则对目标分辨率根本不触发：
+     之前这里写的是 max-height:700px，而注释里自己写的是「720p（1280×720）」——
+     720 > 700，所以这条最紧要的紧凑档从未生效过，实测左栏溢出 30px、
+     第 11 个天体（矮行星）被裁掉看不见。
+     分类标题彻底隐去（改用天体名自带颜色点区分），列表压到两列但字号更小。 */
+  @media(max-height:740px){
+    #left{width:242px}
+    .hd{padding:8px 12px;font-size:12px}
+    .plist{grid-template-columns:1fr 1fr;gap:2px}
+    .pl{font-size:10px;padding:2px 4px;gap:4px}
+    .cat{display:none}
+    .pad{height:21px}
+    .sec{padding:6px 12px}
+    .lbl{font-size:9.5px;margin-bottom:3px}
+    input[type=range]{margin:2px 0 4px}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="labels"></div>
+
+<div class="panel" id="left">
+  <div class="hd"><i class="dot"></i>太阳系控制台</div>
+
+  <div class="sec">
+    <div class="lbl">时间</div>
+    <div class="brow" style="margin-bottom:8px">
+      <div class="btn wide" id="bPlay">⏸ 暂停</div>
+      <div class="btn wide" id="bNow">今天</div>
+      <div class="btn wide" id="bRev">◀ 逆转</div>
+    </div>
+    <div class="row"><span>时间流速</span><span class="val" id="vSpeed">10 天/秒</span></div>
+    <input type="range" id="sSpeed" min="0" max="1000" value="620">
+    <div class="row" id="dDateRow" style="margin-top:7px"><span>跳转日期</span></div>
+    <input type="date" id="dDate" style="width:100%;background:rgba(255,255,255,.05);
+      color:#dfe7f5;border:1px solid var(--line);border-radius:6px;padding:4px 7px;
+      font-size:11.5px;font-family:Consolas,monospace">
+  </div>
+
+  <div class="sec">
+    <div class="lbl">视角控制</div>
+    <!-- 「观察距离」标签 + 数值 + 自动/全览 挤在同一行，省掉一整排按钮的高度 -->
+    <div class="row" style="gap:6px">
+      <span style="flex:0 0 auto">观察距离</span>
+      <div class="btn on" id="bAutoDist" style="padding:3px 8px;font-size:11px">自动</div>
+      <div class="btn" id="bFitAll" style="padding:3px 8px;font-size:11px">全览</div>
+      <span class="val" id="vZoom">自动</span>
+    </div>
+    <input type="range" id="sZoom" min="0" max="1000" value="500">
+    <!-- 方向盘与俯视/侧视横排：原设计是竖排，方向盘 126px 高的网格
+         单独占一行，在矮窗口里会把天体列表顶出视口 -->
+    <div class="row" style="align-items:flex-start;gap:10px">
+      <div style="flex:0 0 auto">
+        <div class="lbl" style="margin-bottom:5px">平移</div>
+        <div class="padgrid">
+          <div class="pad up"    data-dx="0"  data-dz="-1">▲</div>
+          <div class="pad left"  data-dx="-1" data-dz="0">◀</div>
+          <div class="pad mid"   id="padMid">✥</div>
+          <div class="pad right" data-dx="1"  data-dz="0">▶</div>
+          <div class="pad down"  data-dx="0"  data-dz="1">▼</div>
+        </div>
+      </div>
+      <div style="flex:1;min-width:0;align-self:flex-end">
+        <div class="lbl" style="margin-bottom:5px">机位 / 鼠标模式</div>
+        <!-- CAD 式操作模式开关。CAD 里不是靠右键，而是「模式开关 + 左键当前工具」：
+             开启平移模式后左键拖拽= 平移，旋转改由中键承担；关闭时保持原版手感
+             （左键旋转、右键平移）。这样单手也能平移，不必去按右键。
+             注意：这里必须用 HTML 注释，不能用 CSS 注释语法（斜杠+星号）——
+             浏览器不认 CSS 注释，会把内容当纯文本直接渲染到界面上。
+             同理本注释里也不能出现 HTML 注释的结束标记，否则会提前闭合、
+             把后半段泄漏成可见文本（这个坑我踩过两次）。
+
+             四个按钮排成 2×2 而不是 1×4 + 单独一行：
+             矮窗口（749 高）下每多占一行就溢出十几像素，
+             而左栏底部是天体列表，被裁掉的是「月球」这个入口。 -->
+        <div class="brow" style="flex-wrap:wrap">
+          <div class="btn wide" id="bTop" style="flex:1 1 40%">俯视</div>
+          <div class="btn wide" id="bSide" style="flex:1 1 40%">侧视</div>
+          <div class="btn wide" id="bPanMode" style="flex:1 1 40%"
+               title="开启后：左键拖拽=平移，中键=旋转（CAD 习惯）。关闭：左键旋转、右键平移。快捷键 Tab">✥ 平移</div>
+          <div class="btn wide" id="bReset" style="flex:1 1 40%">重置</div>
+        </div>
+        <div class="ckline" id="mouseHint" style="margin-top:4px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="lbl">天体</div>
+    <div class="plist" id="plist"></div>
+  </div>
+
+  <div id="note">默认按<b>真实比例</b>摆放位置，但星球体积与月球距离被放大以便观看。真实尺度下地球只有 0.0003 像素——那才是真相。</div>
+</div>
+
+<!-- 底部横条：从左栏挪下来的「视角/比例」与「显示开关」。
+     这两组控件本来都是横向排布的内容，放底部既贴合形状又砍掉左栏近一半高度。
+     id 与 .ck class 保持不变，JS 的 getElementById + classList 绑定不受影响。 -->
+<div id="bottom">
+  <div class="bcard" id="bRatio">
+    <div class="grp">
+      <div class="lbl">视角 / 比例</div>
+      <div class="brow c3" style="width:172px">
+        <div class="btn on" id="mReal">真实距离</div>
+        <div class="btn" id="mLog">对数压缩</div>
+      </div>
+    </div>
+    <div class="grp" id="bSize">
+      <div class="lbl">星球大小</div>
+      <div class="row" style="margin-bottom:2px"><span class="val" id="vSize">×1500</span></div>
+      <input type="range" id="sSize" min="0" max="1000" value="612">
+    </div>
+  </div>
+  <div class="bcard">
+    <div class="lbl">显示</div>
+    <div id="bToggles">
+      <div class="ck" id="cTrueSize"><i></i><span>真实星球大小</span></div>
+      <div class="ck" id="cMoonReal"><i></i><span>月球真实距离<em>（联动真实大小）</em></span></div>
+      <div class="ck on" id="cOrbit"><i></i><span>轨道线</span></div>
+      <div class="ck" id="cLabel"><i></i><span>常显全部标签</span></div>
+      <div class="ck on" id="cMoon"><i></i><span>月球与月球轨道</span></div>
+      <div class="ck on" id="cGrid"><i></i><span>黄道参考网格</span></div>
+      <div class="ck on" id="cStar"><i></i><span>星空背景</span></div>
+      <div class="ck on" id="cSpin"><i></i><span>行星自转</span></div>
+    </div>
+  </div>
+  <div class="bcard" id="hud">
+    <div id="tp"></div>
+    <div class="sep"></div>
+    <span class="date" id="hDate">2026-10-07</span>
+    <span class="sm" id="hRate">10 天/秒</span>
+    <div class="sep"></div>
+    <div class="btn" id="bPlay2">⏸</div>
+  </div>
+</div>
+
+<div class="panel" id="right">
+  <div class="hd"><i class="dot"></i>天体信息</div>
+  <div class="sec" id="info">
+    <div class="nm">太阳</div>
+    <div class="sub2">点击左侧天体切换</div>
+    <div><span class="k">日心距离</span><span class="v">—</span></div>
+  </div>
+  <div id="viewtip">
+    悬浮看详情 · 拖拽旋转 · 滚轮缩放 · 右键平移<br>
+    点击聚焦 · <kbd>空格</kbd> 暂停 · <kbd>R</kbd> 重置
+  </div>
+</div>
+
+<script src="lib/three.min.js"></script>
+<script src="lib/OrbitControls.js"></script>
+<script>
+/* ============================================================
+   太阳系 3D 模拟器
+   行星位置: JPL SSD 近似轨道根数 (1800-2050, J2000 平黄道)
+   月球位置: Jean Meeus, Astronomical Algorithms Ch.47 (ELP2000-82 截断)
+   ============================================================ */
+const PI = Math.PI, D2R = PI/180, R2D = 180/PI;
+const AU_KM = 149597870.7;
+
+const clamp = (v,a,b)=>v<a?a:(v>b?b:v);
+const mod360 = x => ((x % 360) + 360) % 360;
+const mod180 = x => { let v = mod360(x); return v>180 ? v-360 : v; };
+
+/* ---------- 日期 <-> 儒略日 ---------- */
+const J1970 = 2440587.5, J2000 = 2451545.0;
+function dateToJD(d){ return d.getTime()/86400000 + J1970; }
+function jdToDate(jd){ return new Date((jd - J1970)*86400000); }
+function jdStr(jd){
+  const d = jdToDate(jd);
+  const p = n=>String(n).padStart(2,'0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())} ` +
+         `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+const cent = jd => (jd - J2000)/36525.0;
+
+/* ============================================================
+   行星数据: [名称, 颜色, a0, e0, I0, L0, ϖ0(wbar), Ω0,
+              aDot, eDot, IDot, LDot, ϖDot, ΩDot,
+              半径km, 自转周期(天), 转轴倾角(°), 备注]
+   角速率单位统一为 **度/儒略世纪**（JPL SSD 近似根数表原样）
+   ============================================================ */
+const PLANETS = [
+ {n:'水星', c:0xa8a29b, cls:'ter', a:[0.38709927,0.20563593,7.00497902,252.25032350,77.45779628,48.33076593],
+  d:[0.00000037,0.00001906,-0.00594749,149472.67411175,0.16047689,-0.12534081],
+  r:2439.7, rot:58.646, tilt:0.034, note:'无大气，昼夜温差 600℃'},
+ {n:'金星', c:0xe6c98a, cls:'ter', a:[0.72333566,0.00677672,3.39467605,181.97909950,131.60246718,76.67984255],
+  d:[0.00000390,-0.00004107,-0.00078890,58517.81538729,0.00268329,-0.27769418],
+  r:6051.8, rot:-243.025, tilt:177.36, note:'逆向自转，硫酸云层'},
+ {n:'地球', c:0x4a90d9, cls:'ter', a:[1.00000261,0.01671123,-0.00001531,100.46457166,102.93768193,0.0],
+  d:[0.00000562,-0.00004392,-0.01294668,35999.37244981,0.32327364,0.0],
+  r:6371.0, rot:0.99727, tilt:23.44, note:'我们的家 · 唯一有生命的行星'},
+ {n:'火星', c:0xc1502e, cls:'ter', a:[1.52371034,0.09339410,1.84969142,-4.55343205,-23.94362959,49.55953891],
+  d:[0.00001847,0.00007882,-0.00813131,19140.30268499,0.44441088,-0.29257343],
+  r:3389.5, rot:1.02595, tilt:25.19, note:'奥林帕斯山高 21.9 km'},
+ {n:'木星', c:0xd8a878, cls:'gas', a:[5.20288700,0.04838624,1.30439695,34.39644051,14.72847983,100.47390909],
+  d:[-0.00011607,-0.00013253,-0.00183714,3034.74612775,0.21252668,0.20469106],
+  r:69911, rot:0.41354, tilt:3.13, note:'大红斑 · 质量是其余行星总和的 2.5 倍'},
+ {n:'土星', c:0xe3d2a1, cls:'gas', a:[9.53667594,0.05386179,2.48599187,49.95424423,92.59887831,113.66242448],
+  d:[-0.00125060,-0.00050991,0.00193609,1222.49362201,-0.41897216,-0.28867794],
+  r:58232, rot:0.44401, tilt:26.73, note:'环系宽 28 万 km，厚度仅 10 m 级'},
+ {n:'天王星', c:0x9fe0e8, cls:'ice', a:[19.18916464,0.04725744,0.77263783,313.23810451,170.95427630,74.01692503],
+  d:[-0.00196176,-0.00004397,-0.00242939,428.48202785,0.40805281,0.04240589],
+  r:25362, rot:-0.71833, tilt:97.77, note:'躺着转，行星中转轴最"横"'},
+ {n:'海王星', c:0x4a6fd4, cls:'ice', a:[30.06992276,0.00859048,1.77004347,-55.12002969,44.96476227,131.78422574],
+  d:[0.00026291,0.00005105,0.00035372,218.45945325,-0.32241464,-0.00508664],
+  r:24622, rot:0.67125, tilt:28.32, note:'风速可达 2100 km/h'},
+ {n:'冥王星', c:0xc9b8a8, cls:'dwarf', a:[39.48211675,0.24882730,17.14001206,238.92903833,224.06891629,110.30393684],
+  d:[-0.00031596,0.00005170,0.00004818,145.20780515,-0.04062942,-0.01183482],
+  r:1188.3, rot:-6.3872, tilt:122.53, note:'矮行星 · 与海王星轨道共振 3:2'},
+];
+const SUN = {n:'太阳', c:0xffcc55, cls:'star', r:695700, rot:25.38, tilt:7.25,
+             note:'占太阳系 99.86% 的质量 · 每秒聚变 6 亿吨氢'};
+
+/* ============================================================
+   月球: Meeus Ch.47  (D, M, M', F, Σl 系数, Σr 系数)  单位 1e-6 度 / 1e-3 km
+   ============================================================ */
+const M_LR = [
+0,0,1,0,6288774,-20905355, 2,0,-1,0,1274027,-3699111, 2,0,0,0,658314,-2955968,
+0,0,2,0,213618,-569925, 0,1,0,0,-185116,48888, 0,0,0,2,-114332,-3149,
+2,0,-2,0,58793,246158, 2,-1,-1,0,57066,-152138, 2,0,1,0,53322,-170733,
+2,-1,0,0,45758,-204586, 0,1,-1,0,-40923,-129620, 1,0,0,0,-34720,108743,
+0,1,1,0,-30383,104755, 2,0,0,-2,15327,10321, 0,0,1,2,-12528,0,
+0,0,1,-2,10980,79661, 4,0,-1,0,10675,-34782, 0,0,3,0,10034,-23210,
+4,0,-2,0,8548,-21636, 2,1,-1,0,-7888,24208, 2,1,0,0,-6766,30824,
+1,0,-1,0,-5163,-8379, 1,1,0,0,4987,-16675, 2,-1,1,0,4036,-12831,
+2,0,2,0,3994,-10445, 4,0,0,0,3861,-11650, 2,0,-3,0,3665,14403,
+0,1,-2,0,-2689,-7003, 2,0,-1,2,-2602,0, 2,-1,-2,0,2390,10056,
+1,0,1,0,-2348,6322, 2,-2,0,0,2236,-9884, 0,1,2,0,-2120,5751,
+0,2,0,0,-2069,0, 2,-2,-1,0,2048,-4950, 2,0,1,-2,-1773,4130,
+2,0,0,2,-1595,0, 4,-1,-1,0,1215,-3958, 0,0,2,2,-1110,0,
+3,0,-1,0,-892,3258, 2,1,1,0,-810,2616, 4,-1,-2,0,759,-1897,
+0,2,-1,0,-713,-2117, 2,2,-1,0,-700,2354, 2,1,-2,0,691,0,
+2,-1,0,-2,596,0, 4,0,1,0,549,-1423, 0,0,4,0,537,-1117,
+4,-1,0,0,520,-1571, 1,0,-2,0,-487,-1739, 2,1,0,-2,-399,0,
+0,0,2,-2,-381,-4421, 1,1,1,0,351,0, 3,0,-2,0,-340,0,
+4,0,-3,0,330,0, 2,-1,2,0,327,0, 0,2,1,0,-323,1165,
+1,1,-1,0,299,0, 2,1,1,0,294,0, 2,0,3,0,0,0,
+2,1,-2,0,0,8752
+];
+const M_B = [
+0,0,0,1,5128122, 0,0,1,1,280602, 0,0,1,-1,277693, 2,0,0,-1,173237,
+2,0,-1,1,55413, 2,0,-1,-1,46271, 2,0,0,1,32573, 0,0,2,1,17198,
+2,0,1,-1,9266, 0,0,2,-1,8822, 2,-1,0,-1,8216, 2,0,-2,-1,4324,
+2,0,1,1,4200, 2,1,0,-1,-3359, 2,-1,-1,1,2463, 2,-1,0,1,2211,
+2,-1,-1,-1,2065, 0,1,-1,-1,-1870, 4,0,-1,-1,1828, 0,1,0,1,-1794,
+0,0,0,3,-1749, 0,1,-1,1,-1565, 1,0,0,1,-1491, 0,1,1,1,-1475,
+0,1,1,-1,-1410, 0,1,0,-1,-1344, 1,0,0,-1,-1335, 0,0,3,1,1107,
+4,0,0,-1,1021, 4,0,-1,1,833, 0,0,1,-3,777, 4,0,-2,1,671,
+2,0,0,-3,607, 2,0,2,-1,596, 2,-1,1,-1,491, 2,0,-2,1,-451,
+0,0,3,-1,439, 2,0,2,1,422, 2,0,-3,-1,421, 2,1,-1,1,-366,
+2,1,0,1,-351, 4,0,0,1,331, 2,-1,1,1,315, 2,-2,0,-1,302,
+0,0,1,3,-283, 2,1,1,-1,-229, 1,1,0,-1,223, 1,1,0,1,223,
+0,1,-2,-1,-220, 2,1,-1,-1,-220, 1,0,1,1,-185, 2,-1,-2,-1,181,
+0,1,2,1,-177, 4,0,-2,-1,176, 4,-1,-1,-1,166, 1,0,1,-1,-164,
+4,0,1,-1,132, 1,0,-1,-1,-119, 4,-1,0,-1,115, 2,-2,0,1,107
+];
+
+/** 月球相对地球的地心黄道直角坐标 (AU, 黄道 J2000) */
+function moonGeo(jd){
+  const T = cent(jd);
+  const T2=T*T, T3=T2*T, T4=T3*T;
+  const Lp = 218.3164477 + 481267.88123421*T - 0.0015786*T2 + T3/538841 - T4/65194000;
+  const D  = 297.8501921 + 445267.1114034*T - 0.0018819*T2 + T3/545868 - T4/113065000;
+  const M  = 357.5291092 + 35999.0502909*T - 0.0001536*T2 + T3/24490000;
+  const Mp = 134.9633964 + 477198.8675055*T + 0.0087414*T2 + T3/69699 - T4/14712000;
+  const F  = 93.2720950 + 483202.0175233*T - 0.0036539*T2 - T3/3526000 + T4/863310000;
+
+  const E = 1 - 0.002516*T - 0.0000074*T2;
+  const A1 = 119.75 + 131.849*T, A2 = 53.09 + 479264.290*T, A3 = 313.45 + 481266.484*T;
+  const ecc = m => Math.abs(m)===1 ? E : Math.abs(m)===2 ? E*E : 1;
+
+  let sl=0, sr=0;
+  for(let i=0;i<M_LR.length;i+=6){
+    const a = M_LR[i]*D + M_LR[i+1]*M + M_LR[i+2]*Mp + M_LR[i+3]*F;
+    const e = ecc(M_LR[i+1]);
+    sl += M_LR[i+4]*e*Math.sin(a*D2R);
+    sr += M_LR[i+5]*e*Math.cos(a*D2R);
+  }
+  let sb=0;
+  for(let i=0;i<M_B.length;i+=5){
+    const a = M_B[i]*D + M_B[i+1]*M + M_B[i+2]*Mp + M_B[i+3]*F;
+    const e = ecc(M_B[i+1]);
+    sb += M_B[i+4]*e*Math.sin(a*D2R);
+  }
+  sl += 3958*Math.sin(A1*D2R) + 1962*Math.sin((Lp-F)*D2R) + 318*Math.sin(A2*D2R);
+  sb += -2235*Math.sin(Lp*D2R) + 382*Math.sin(A3*D2R)
+      + 175*Math.sin((A1-F)*D2R) + 175*Math.sin((A1+F)*D2R)
+      + 127*Math.sin((Lp-Mp)*D2R) - 115*Math.sin((Lp+Mp)*D2R);
+
+  const lam = (Lp + sl/1e6) * D2R;
+  const bet = (sb/1e6) * D2R;
+  const dist = (385000.56 + sr/1000) / AU_KM;   // AU
+  const cb = Math.cos(bet);
+  return { x: dist*cb*Math.cos(lam), y: dist*cb*Math.sin(lam), z: dist*Math.sin(bet),
+           dist };
+}
+
+/** 求解开普勒方程 E - e·sinE = M (牛顿迭代) */
+function solveKepler(M, e){
+  M = mod180(M);
+  let E = M + e*R2D*Math.sin(M*D2R);
+  for(let i=0;i<12;i++){
+    const dM = M - (E - e*R2D*Math.sin(E*D2R));
+    const dE = dM / (1 - e*Math.cos(E*D2R));
+    E += dE;
+    if(Math.abs(dE) < 1e-9) break;
+  }
+  return E;
+}
+
+/** 行星日心黄道直角坐标 (AU)，同时返回轨道要素用于画轨道线 */
+function planetState(p, jd){
+  const T = cent(jd);
+  const a  = p.a[0] + p.d[0]*T;
+  const e  = p.a[1] + p.d[1]*T;
+  const I  = p.a[2] + p.d[2]*T;
+  const L  = p.a[3] + p.d[3]*T;
+  const wb = p.a[4] + p.d[4]*T;
+  const Om = p.a[5] + p.d[5]*T;
+  // 轨道根数定义:
+  //   Ω = 升交点黄经, ϖ(wb) = 近日点黄经, L = 平黄经
+  //   ω = 近日点幅角 = ϖ - Ω      (注意不是 L - ϖ，那是平近点角 M)
+  //   M = 平近点角 = L - ϖ
+  const w  = wb - Om;                 // 近日点幅角
+  const M  = mod180(L - wb);          // 平近点角
+  const E  = solveKepler(M, e);
+  const xp = a*(Math.cos(E*D2R) - e);
+  const yp = a*Math.sqrt(1-e*e)*Math.sin(E*D2R);
+
+  const cw=Math.cos(w*D2R), sw=Math.sin(w*D2R);
+  const cO=Math.cos(Om*D2R), sO=Math.sin(Om*D2R);
+  const cI=Math.cos(I*D2R), sI=Math.sin(I*D2R);
+  return {
+    x:(cw*cO - sw*sO*cI)*xp + (-sw*cO - cw*sO*cI)*yp,
+    y:(cw*sO + sw*cO*cI)*xp + (-sw*sO + cw*cO*cI)*yp,
+    z:( sw*sI        )*xp + ( cw*sI        )*yp,
+    el:{a,e,I,L,w,Om,M,E}
+  };
+}
+
+/* ============================================================
+   三维场景
+   ============================================================ */
+const SCENE_SCALE = 100;                 // 1 AU = 100 three 单位
+const MOON_R = 1737.4;                   // km
+const container = document.getElementById('app');
+
+const renderer = new THREE.WebGLRenderer({antialias:true, logarithmicDepthBuffer:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+/* ACES Filmic：高光平滑滚降而非硬截断。没有它时金星(反照率 0.76)这类
+   高反照率行星在近景会被 PointLight 打到过曝死白。
+   降光源强度是错的做法——那会把水星(0.142)、月球(0.12) 一起压成黑饼。
+
+   但 ACES 是电影级调色，会把高饱和色往白里拉：木星的褐色条带被洗成奶白、
+   海王星的深蓝褪成淡蓝。实测扫描（曝光 × 11 颗天体）显示：
+   曝光 0.92 时木星饱和仅 0.17、火星 0.62；压到 0.62 后
+   木星 0.22、火星 0.68、海王星 0.44，而水星(123)/月球(120) 依然可见。
+   0.62 是实测出来的甜点：让高反照率天体的色相从 ACES 肩部落回线性区，
+   同时不动光源强度、不牺牲暗天体的可见性。*/
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.62;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05070f);
+
+const camera = new THREE.PerspectiveCamera(48, innerWidth/innerHeight, 0.02, 4e6);
+camera.position.set(120, 190, 330);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+// 保持原版「每帧(60fps) 保留比例」语义，dtScale 让它在任意帧率下等效
+controls.dampingFactor = 0.075;
+/* 旋转灵敏度。OrbitControls 的换算是
+     rotateLeft( 2π · Δpx · rotateSpeed / clientHeight )
+   即拖过整个画面高度才转 2π·rotateSpeed。0.62 意味着拖 1/4 屏就转 56°，
+   在这个尺度下（一次能把整个太阳系转着看）过于灵敏，容易 overshoot 找不回
+   原来的视角。0.15 约为原来的 24%，拖 1/4 屏只转 13°，需要拖 2.3 屏才转一圈
+   —— 接近真实星图软件（Celestia/ Stellarium）的细调手感，能精确停在
+   想看的构图上。
+   注意 rotateSpeed 只作用于鼠标拖拽：俯视/侧视走 setViewDir 的球面插值，
+   方向键走 panBy，都不受影响。OrbitControls 自带的键盘旋转也没启用
+   （listenToKeyEvents 从未被调用），所以这里改纯粹是拖拽手感。 */
+controls.rotateSpeed = 0.15;
+controls.zoomSpeed = 0.95;
+controls.panSpeed = 0.7;
+controls.minDistance = 0.02;
+controls.maxDistance = 2.5e5;
+/* 关掉内建 zoom：滚轮由自定义 handler 独占（它负责同步 zoomUser 和滑块 UI，
+   见下方 wheel 监听）。两者都响应同一个滚轮事件会叠加缩放，导致实际距离
+   与滑块反推的数值对不上（实测一格滚轮实际 1.05× 但滑块显示 1.24×）。 */
+controls.enableZoom = false;
+
+/* 环境光只留一点点。太空里没有大气散射，夜面除地球城市灯光外应近乎全黑；
+   之前的 0.55（相对太阳光 3.1 ≈ 18% 补光）会把所有行星夜面提成灰色。
+   0.10 是个折中：夜面仍有可辨的轮廓（真实里有星光与环系反照），
+   但绝不会亮到盖过向阳面（金星 0.76 反照率下尤其明显）。 */
+scene.add(new THREE.AmbientLight(0x2a3550, 0.10));
+const sunLight = new THREE.PointLight(0xfff4e0, 3.1, 0, 0);   // decay=0 → 无衰减，方向天然正确
+sunLight.position.set(0,0,0);
+scene.add(sunLight);
+
+/* ---------- 距离映射 ---------- */
+let distMode = 'real', sizeMul = 1500, trueSize = false;
+let moonReal = false;
+/* 太阳的显示尺寸参考点：滑块默认位置。太阳锁在这个值上，不随「星球大小」变化，
+   这样调行星直径时太阳（及它的辉光、日冕）绝对不跳变。见 bodyRadius。*/
+const SUN_SIZE_REF = 1500;
+/* 太阳辉光直径（单位）。与太阳实体 34.28 的比约 2.9× —— 超过 3× 就会因
+   AdditiveBlending 在画面中央糊成大圆盘，把内行星轨道盖住。*/
+const SUN_GLOW_BASE = 100;
+const LOG_LO = Math.log10(0.00257), LOG_HI = Math.log10(39.5), LOG_SPAN = LOG_HI - LOG_LO;
+function mapAU(au){
+  if(distMode === 'real') return au * SCENE_SCALE;
+  const t = (Math.log10(Math.max(au,1e-6)) - LOG_LO)/LOG_SPAN;
+  return 150 + 2850*clamp(t,0,1);
+}
+/* 月球距离放大：用乘性缩放（绝不 Math.max 截断），完整保留真实的 14% 距离起伏。
+   倍数是视觉权衡，不是真实比例：真实 60.3×(地月距/地球半径) 会让月轨跑到
+   144 单位，比地球日心距(100)还大，看起来像「月球不属于地球系统」。
+
+   ⚠ 月轨半径**不能再挂在 bodyRadius(6371) 上**：那个函数带 sizeMul 因子，
+     一调「星球大小」滑块，月轨就跟着等比缩放 —— 星球放大 10 倍时月轨也放 10 倍，
+     跑到完全看不见的地方；缩小时又挤进地球里。这是要修掉的联动之一。
+     现在改成挂在**地球日心距**上（日心距只由距离模式决定，与大小滑块无关）：
+       月轨半径 = 地球日心距 × MOON_ORBIT_FRAC
+     0.20 → 1 AU 时约 20 单位 = 8.4 个「默认地球半径」，既能看清在绕地，
+     又不像旧版 10 倍（23.9 单位）那样偏远。
+   ⚠ 唯一保留的 sizeMul 依赖是**下限保护**：真实大小模式下地球半径会缩到
+     0.004，不设防月球会埋进地心。所以月轨至少要比
+     「地球显示半径 + 月球显示半径 ×1.5」大 —— 这在正常滑块范围内不生效。 */
+const MOON_ORBIT_FRAC = 0.20;              // 月轨半径 = 地球日心距 × 此值
+let _moonBoost = 1;                          // 本帧生效的放大倍数（缓存，供 UI/轨道线复用）
+
+/** 依据当前距离模式 / 地球日心距 / 地球显示半径，重算月轨放大倍数并缓存 */
+function syncMoonBoost(earthSunDist){
+  if(moonReal || distMode==='log'){ _moonBoost = 1; return _moonBoost; }
+  const want  = Math.max(earthSunDist, 1e-6) * MOON_ORBIT_FRAC;
+  const floor = bodyRadius(6371) + bodyRadius(MOON_R)*1.5;   // 防埋球
+  _moonBoost = Math.max(want, floor) / (0.00257*SCENE_SCALE);
+  return _moonBoost;
+}
+/** 读取当前放大倍数（页面初始化时以 1 AU 地球距离预热一次） */
+function moonBoost(){ return _moonBoost; }
+function mapMoon(au){
+  if(moonReal || distMode==='log') return mapAU(au);
+  return au * SCENE_SCALE * _moonBoost;
+}
+
+/* ============================================================
+   材质物理参数表
+   数据来源：NASA Planetary Fact Sheet / 维基百科 Albedo 条目
+   几何反照率(geometric albedo) 与 Bond 反照率是真值，用来定基色明度；
+   粗糙度/金属度按实际表面成分（岩石 0.9+、冰 0.4~0.6、硫酸云 0.95、云海 1.0）。
+   ============================================================ */
+const PHYS = {
+  // 太阳：光球，自身发光，不接受外部光照
+  sun : {albedo:null, rough:1.00, metal:0.00, emissive:1.00, bump:0.0,
+         note:'光球温度 5,772 K，辐射而非反射'},
+
+  // 水星：几何反照率 0.142（极暗），无大气，密布陨石坑
+  水星 : {albedo:0.142, rough:0.94, metal:0.00, emissive:0.0, bump:1.0,
+         note:'无大气 · 昼夜温差 600℃ · 表面 0.142 反照率（极暗）'},
+
+  // 金星：Bond 0.76（极亮），硫酸云层覆盖，逆向自转
+  金星 : {albedo:0.760, rough:0.95, metal:0.00, emissive:0.0, bump:0.15,
+         note:'硫酸云层 · 云顶反照率 0.76（最亮）'},
+
+  // 地球：几何 0.434 / Bond 0.306。海洋镜面 + 陆地漫反射是最大特征
+  地球 : {albedo:0.434, rough:0.62, metal:0.00, emissive:0.0, bump:0.55,
+         note:'海洋镜面反射 · 71% 水覆盖 · Bond 反照率 0.306'},
+
+  // 火星：几何 0.170，氧化铁尘埃，铁锈红
+  火星 : {albedo:0.170, rough:0.90, metal:0.00, emissive:0.0, bump:0.75,
+         note:'氧化铁尘埃 · 稀薄大气 · 几何反照率 0.170'},
+
+  // 木星：几何 0.538，氨冰云带，条纹是强烈的东西向风剪切
+  木星 : {albedo:0.538, rough:1.00, metal:0.00, emissive:0.0, bump:0.0,
+         note:'氨冰云带 · 纬向风速 150 m/s · 反照率 0.538'},
+
+  // 土星：几何 0.499，低对比度（高层雾霾冲淡条纹）
+  土星 : {albedo:0.499, rough:1.00, metal:0.00, emissive:0.0, bump:0.0,
+         note:'高层雾霾冲淡条纹 · 环系反射率高达 0.5'},
+
+  // 天王星：几何 0.488，甲烷吸收红光呈青绿，**几乎完全无特征**
+  天王星: {albedo:0.488, rough:0.88, metal:0.00, emissive:0.0, bump:0.0,
+         note:'甲烷吸收红光 · 旅行者2号拍到的是一颗几乎无特征的行星'},
+
+  // 海王星：几何 0.442，甲烷 + 更薄雾霾 → 深蓝，有大暗斑和高空白色卷云
+  海王星: {albedo:0.442, rough:0.88, metal:0.00, emissive:0.0, bump:0.0,
+         note:'甲烷吸收红光 · 大暗斑 + 高空甲烷卷云 · 太阳系最强风 2,100 km/h'},
+
+  // 冥王星：几何 0.44~0.61（很高！），氮冰反光率高
+  冥王星: {albedo:0.520, rough:0.72, metal:0.00, emissive:0.0, bump:0.85,
+         note:'氮冰表面反照率异常高 · 汤博区与心形冰原'},
+
+  // 月球：几何 0.12（极暗），月海玄武岩 + 密布陨石坑 + 辐射纹
+  月球 : {albedo:0.120, rough:0.98, metal:0.00, emissive:0.0, bump:1.0,
+         note:'月海玄武岩 · 几何反照率 0.12 · 无大气'}
+};
+
+/* ---------- 程序化贴图 ---------- */
+function cvTexture(w,h,draw){
+  const c = document.createElement('canvas'); c.width=w; c.height=h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+/** 数据贴图（法线/粗糙度）：必须是线性空间，不能做 sRGB 编码 */
+function dataTexture(w,h,draw){
+  const c = document.createElement('canvas'); c.width=w; c.height=h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.LinearEncoding;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+let seed = 20261007;
+const rnd = ()=>{ seed = (seed*1664525 + 1013903823) & 0x7fffffff; return seed/0x7fffffff; };
+/** 平滑的 2D 值噪声，比逐点 rnd 自然得多 */
+function noise2(x, y, scale, oct){
+  let v=0, amp=1, f=1, norm=0;
+  for(let o=0;o<oct;o++){
+    const xi=Math.floor(x*scale*f), yi=Math.floor(y*scale*f);
+    const xf=(x*scale*f)-xi,        yf=(y*scale*f)-yi;
+    const u=xf*xf*(3-2*xf), t=yf*yf*(3-2*yf);
+    const h=(a,b)=>{ let n=(a*374761393+b*668265263+seed*1442695041)&0x7fffffff;
+                      n=(n^(n>>13))*1274126177&0x7fffffff; return ((n^(n>>16))&0xffff)/65535; };
+    v += amp*((h(xi,yi)*(1-u)+h(xi+1,yi)*u)*(1-t) + (h(xi,yi+1)*(1-u)+h(xi+1,yi+1)*u)*t);
+    norm+=amp; amp*=0.5; f*=2.1;
+  }
+  return v/norm;
+}
+/** 陨石坑：带高光边和阴影侧的立体坑，比纯色块真实得多 */
+function craters(g, W, H, n, rmin, rmax, lightFromLeft){
+  for(let i=0;i<n;i++){
+    const x=rnd()*W, y=rnd()*H, r=rmin+rnd()*rnd()*(rmax-rmin);
+    const sx=lightFromLeft? 1:-1;
+    // 坑底（暗）
+    g.beginPath(); g.ellipse(x,y,r,r*0.88,0,0,7);
+    g.fillStyle='rgba(0,0,0,'+(0.10+rnd()*0.16)+')'; g.fill();
+    // 受光侧边缘亮环
+    g.beginPath();
+    g.ellipse(x-sx*r*0.16, y-r*0.16, r*0.92, r*0.80, 0, 0, 7);
+    g.strokeStyle='rgba(255,255,255,'+(0.10+rnd()*0.14)+')';
+    g.lineWidth=Math.max(1, r*0.14); g.stroke();
+    // 背光侧阴影
+    g.beginPath();
+    g.ellipse(x+sx*r*0.30, y+r*0.10, r*0.58, r*0.50, 0, 0, 7);
+    g.fillStyle='rgba(0,0,0,'+(0.08+rnd()*0.13)+')'; g.fill();
+  }
+}
+/** 从高度图生成法线贴图（Sobel 算子），让表面真正有凹凸光照 */
+function normalFromHeight(hCanvas, strength){
+  const W=hCanvas.width, H=hCanvas.height;
+  const src=hCanvas.getContext('2d').getImageData(0,0,W,H).data;
+  const out=document.createElement('canvas'); out.width=W; out.height=H;
+  const octx=out.getContext('2d');
+  const img=octx.createImageData(W,H);
+  const d=img.data;
+  // 球面等距圆柱贴图：左右要环绕（经度接缝），上下要夹紧（极点）
+  const hgt=(x,y)=>{
+    const xx=((x%W)+W)%W;
+    const yy=y<0?0:(y>=H?H-1:y);
+    return src[(yy*W+xx)*4]/255;
+  };
+  for(let y=0;y<H;y++){
+    // 纬度越靠近两极，经度方向的物理距离越短 → 梯度要横向放大
+    const lat=Math.abs(y/H-0.5)*2;                 // 0=赤道 1=极点
+    const stretch=1/Math.max(0.14, Math.cos(lat*Math.PI/2));
+    for(let x=0;x<W;x++){
+      const tl=hgt(x-1,y-1), t=hgt(x,y-1), tr=hgt(x+1,y-1);
+      const l =hgt(x-1,y  ),                 r =hgt(x+1,y  );
+      const bl=hgt(x-1,y+1), b=hgt(x,y+1), br=hgt(x+1,y+1);
+      const dx=(tr+2*r+br)-(tl+2*l+bl);
+      const dy=(bl+2*b+br)-(tl+2*t+tr);
+      let nx=-dx*strength*stretch, ny=dy*strength*stretch, nz=1;
+      const inv=1/Math.hypot(nx,ny,nz);
+      nx*=inv; ny*=inv; nz*=inv;
+      const i=(y*W+x)*4;
+      d[i]  =(nx*0.5+0.5)*255;
+      d[i+1]=(ny*0.5+0.5)*255;
+      d[i+2]=(nz*0.5+0.5)*255;
+      d[i+3]=255;
+    }
+  }
+  octx.putImageData(img,0,0);
+  const t=new THREE.CanvasTexture(out);
+  t.encoding = THREE.LinearEncoding;
+  t.wrapS = THREE.RepeatWrapping;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+
+
+/** 通用：分形噪声底纹，让平面色块有质感 */
+function fbmFill(g, W, H, scale, oct, colA, colB, amt){
+  const img=g.createImageData(W,H), d=img.data;
+  const ca=new THREE.Color(colA), cb=new THREE.Color(colB);
+  const c=new THREE.Color();
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const n=noise2(x/W, y/H, scale, oct);
+    c.copy(ca).lerp(cb, n);
+    const i=(y*W+x)*4;
+    d[i]=c.r*255; d[i+1]=c.g*255; d[i+2]=c.b*255; d[i+3]=255*amt;
+  }
+  // 用离屏画布叠加，避免逐像素 putImageData 覆盖
+  const t=document.createElement('canvas'); t.width=W; t.height=H;
+  t.getContext('2d').putImageData(img,0,0);
+  g.drawImage(t,0,0);
+}
+
+/* ---------- 各天体表面：按真实地质/大气特征 ---------- */
+
+// 水星：密布陨石坑 + 平原（_smooth volcanic plains_）+ 卡洛里盆地
+function mercSurface(W,H){
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.fillStyle='#8a8078'; g.fillRect(0,0,W,H);          // 极暗的灰色岩质
+  fbmFill(g,W,H,3.5,5,'#6e6660','#a49a90',0.55);       // 区域明暗差异
+  // 大平原（低反照率，撞击熔融而成）
+  g.globalAlpha=0.3;
+  for(let i=0;i<9;i++){
+    g.fillStyle='#5f5852';
+    g.beginPath(); g.ellipse(rnd()*W,rnd()*H,60+rnd()*180,40+rnd()*110,0,0,7); g.fill();
+  }
+  g.globalAlpha=1;
+  craters(g,W,H,420,1.5,26,true);
+  craters(g,W,H,60,20,70,true);                        // 几个大撞击盆地
+  return c;
+}
+
+// 月球：月海（暗色玄武岩平原）+ 高地 + **辐射纹**（真实最显著的年轻撞击特征）
+function moonSurface(W,H){
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.fillStyle='#9a958e'; g.fillRect(0,0,W,H);
+  fbmFill(g,W,H,3,5,'#7d786f','#b0aaa0',0.6);
+  // 月海：大片暗色玄武岩，集中在近侧（贴图中央）
+  g.globalAlpha=0.5;
+  const maria=[[0.30,0.36,0.13,0.11],[0.42,0.30,0.09,0.07],[0.24,0.48,0.08,0.06],
+               [0.36,0.52,0.10,0.08],[0.50,0.38,0.07,0.055],[0.31,0.60,0.06,0.05],
+               [0.44,0.46,0.05,0.04],[0.55,0.55,0.06,0.045]];
+  maria.forEach(([u,v,ru,rv])=>{
+    g.fillStyle='#5d5952';
+    g.beginPath(); g.ellipse(u*W,v*H,ru*W,rv*H,0,0,7); g.fill();
+  });
+  g.globalAlpha=1;
+  // 辐射纹：从几个年轻撞击点向外放射的高亮条带
+  const rays=[[0.31,0.37],[0.42,0.31],[0.24,0.49]];
+  g.lineCap='round';
+  rays.forEach(([u,v],ri)=>{
+    const cx=u*W, cy=v*H, R=ri===0?300:230;
+    for(let i=0;i<46;i++){
+      const a=rnd()*Math.PI*2, r0=R*(0.25+rnd()*0.5), r1=R*(0.7+rnd()*0.75);
+      g.globalAlpha=0.05+rnd()*0.13;
+      g.strokeStyle='#d8d3ca'; g.lineWidth=1.5+rnd()*6;
+      g.beginPath();
+      g.moveTo(cx+Math.cos(a)*r0, cy+Math.sin(a)*r0*0.85);
+      g.lineTo(cx+Math.cos(a)*r1, cy+Math.sin(a)*r1*0.85);
+      g.stroke();
+    }
+  });
+  g.globalAlpha=1;
+  craters(g,W,H,380,1.5,22,true);
+  return c;
+}
+
+// 金星：硫酸云层，**Y 形紫外特征**是真实特征；无任何地表细节
+function venusSurface(W,H){
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.fillStyle='#e8d5a4'; g.fillRect(0,0,W,H);
+  fbmFill(g,W,H,2.2,4,'#d8c48c','#f6ead0',0.7);
+  // 纬向云带（超旋转使云带沿纬线拉长）
+  for(let y=0;y<H;y++){
+    const t=y/H;
+    const band=0.5+0.5*Math.sin(t*22+1.6*Math.sin(t*5.1));
+    g.globalAlpha=0.05+band*0.09;
+    g.fillStyle=band>0.5?'#fff6de':'#c9ab6e';
+    g.fillRect(0,y,W,1);
+  }
+  // Y 形紫外暗纹
+  g.globalAlpha=0.10; g.strokeStyle='#a88a4e'; g.lineWidth=W*0.028; g.lineCap='round';
+  g.beginPath();
+  g.moveTo(W*0.50,H*0.10); g.quadraticCurveTo(W*0.30,H*0.42, W*0.50,H*0.92);
+  g.moveTo(W*0.50,H*0.10); g.quadraticCurveTo(W*0.72,H*0.42, W*0.50,H*0.92);
+  g.stroke();
+  g.globalAlpha=1;
+  // 极区涡旋（真实的极地涡）
+  [0,1].forEach(k=>{
+    g.save(); g.translate(W*0.5, H*(k?0.955:0.045));
+    for(let i=0;i<7;i++){
+      g.globalAlpha=0.07; g.strokeStyle='#c0a468'; g.lineWidth=2+rnd()*4;
+      g.beginPath(); g.ellipse(0,0,26+i*13,12+i*7,rnd()*0.6,0,7); g.stroke();
+    }
+    g.restore();
+  });
+  g.globalAlpha=1;
+  return c;
+}
+
+/* ---------- 地球陆地掩膜（真实大陆轮廓） ----------
+   原来用 fbm 噪声当陆地：形状是随机斑点，既不是任何真实大陆，
+   也不可能认出是「地球仪」。现在改成**按经纬度多边形填充**：
+   等距柱状（equirectangular）投影直接画出各洲轮廓 —— x=(lon+180)/360·W，
+   y=(90-lat)/180·H，正好对应球面 UV 的展开方式，所以贴到球上位置是对的。
+   ⚠ 不能用「逐像素点在多边形内」判断：28 个洲 × 30 顶点 × 52 万像素
+     ≈ 4 亿次运算，主线程会卡死好几秒。正确做法是用 canvas 的 path fill
+     光栅化（原生加速），再读回像素当掩膜。 */
+const CONTINENTS = [
+  // 非洲
+  [[-17,15],[-16,22],[-13,28],[-9,32],[-6,36],[0,36],[10,37],[11,33],[20,32],[25,32],
+   [32,31],[35,28],[37,22],[39,15],[43,12],[48,12],[51,11],[48,5],[43,2],[41,-2],
+   [40,-10],[36,-17],[35,-24],[32,-29],[27,-34],[20,-35],[18,-33],[15,-27],[13,-20],
+   [12,-15],[13,-8],[9,-1],[9,4],[5,5],[0,5],[-4,5],[-8,4],[-13,8],[-16,12]],
+  // 欧洲（含斯堪的纳维亚）
+  [[-10,36],[-9,44],[-2,43],[0,49],[4,52],[8,54],[10,58],[6,62],[10,64],[15,69],
+   [21,70],[28,71],[33,70],[40,68],[46,67],[52,69],[58,68],[60,62],[55,58],[50,55],
+   [48,51],[40,47],[38,45],[32,45],[28,42],[24,40],[19,42],[16,38],[13,45],[8,44],
+   [3,43],[-2,43],[-9,37]],
+  // 西伯利亚 + 中亚北侧
+  [[58,52],[58,68],[66,72],[76,73],[86,76],[100,77],[112,74],[124,73],[136,73],
+   [148,72],[160,71],[170,68],[178,65],[172,62],[163,60],[158,57],[152,59],[145,54],
+   [140,52],[135,48],[130,44],[126,45],[120,50],[112,50],[100,50],[90,50],[80,50],
+   [70,50],[62,52]],
+  // 中国 / 东亚 / 蒙古
+  [[75,38],[80,45],[90,48],[100,45],[110,43],[118,40],[122,37],[121,31],[117,24],
+   [110,21],[108,16],[105,10],[100,22],[95,28],[80,32],[75,35]],
+  // 印度半岛
+  [[68,24],[70,21],[73,16],[76,9],[77,8],[80,12],[81,16],[85,19],[88,21],[91,22],
+   [92,25],[89,27],[84,27],[80,25],[76,28],[73,30],[70,25]],
+  // 阿拉伯半岛
+  [[34,29],[36,36],[44,38],[52,38],[57,30],[60,25],[55,17],[52,17],[45,13],
+   [43,17],[39,21],[35,28]],
+  // 中东（伊朗高原 + 美索不达米亚）
+  [[36,36],[44,42],[52,42],[62,45],[70,42],[78,40],[80,36],[72,30],[62,28],
+   [54,30],[48,30],[44,30],[40,32],[36,34]],
+  // 东南亚 / 中南半岛
+  [[92,22],[96,20],[100,17],[104,11],[107,10],[109,15],[113,20],[118,22],[122,31],
+   [118,25],[112,22],[108,18],[104,15],[100,22],[96,24],[92,24]],
+  // 印尼群岛 + 新几内亚
+  [[95,6],[105,-6],[115,-8],[130,-8],[141,-8],[150,-6],[141,-2],[130,-2],[120,1],
+   [115,5],[105,1],[95,6]],
+  // 日本 / 菲律宾
+  [[130,31],[135,34],[140,36],[142,42],[145,44],[141,45],[139,38],[135,34],[130,31]],
+  [[120,18],[122,15],[126,10],[126,7],[122,6],[120,13]],
+  // 北美
+  [[-168,66],[-165,60],[-160,58],[-152,58],[-148,60],[-140,60],[-135,57],[-130,52],
+   [-125,48],[-124,40],[-120,34],[-117,32],[-114,28],[-110,24],[-105,20],[-97,16],
+   [-92,15],[-88,16],[-87,21],[-90,21],[-92,19],[-95,19],[-97,25],[-95,29],[-89,29],
+   [-85,30],[-82,25],[-80,27],[-81,32],[-76,35],[-74,40],[-70,43],[-66,45],[-60,47],
+   [-55,52],[-64,58],[-78,62],[-80,70],[-95,70],[-105,69],[-115,70],[-125,70],
+   [-135,69],[-145,70],[-156,71]],
+  // 南美
+  [[-81,-5],[-79,0],[-77,8],[-72,12],[-63,11],[-60,5],[-52,5],[-50,0],[-44,-2],
+   [-38,-5],[-35,-8],[-39,-15],[-41,-22],[-48,-25],[-53,-33],[-57,-38],[-62,-40],
+   [-65,-45],[-68,-50],[-70,-55],[-75,-52],[-73,-45],[-73,-38],[-71,-30],[-70,-23],
+   [-70,-18],[-76,-14],[-79,-6]],
+  // 澳大利亚
+  [[113,-22],[114,-26],[115,-34],[119,-35],[125,-33],[131,-32],[137,-35],[140,-38],
+   [146,-39],[150,-37],[153,-32],[153,-28],[149,-21],[146,-19],[143,-14],[136,-12],
+   [131,-12],[125,-14],[122,-17],[117,-20]],
+  // 塔斯马尼亚 / 新西兰
+  [[145,-41],[148,-41],[148,-43],[145,-43]],
+  [[173,-35],[178,-38],[177,-40],[174,-41],[172,-43],[167,-46],[166,-45],[171,-41]],
+  // 格陵兰
+  [[-45,60],[-40,63],[-30,68],[-22,70],[-20,76],[-25,82],[-40,83],[-55,82],[-62,76],
+   [-58,68],[-53,64],[-50,60]],
+  // 南极洲（波浪边缘）
+  [[-180,-90],[180,-90],[180,-78],[160,-77],[140,-75],[120,-73],[100,-73],[80,-70],
+   [60,-68],[40,-70],[20,-70],[0,-69],[-20,-70],[-40,-75],[-60,-78],[-80,-73],
+   [-100,-73],[-120,-72],[-140,-75],[-160,-77],[-180,-78]],
+  // 马达加斯加 / 冰岛 / 大不列颠 / 爱尔兰 / 古巴 / 斯里兰卡
+  [[43,-12],[50,-15],[50,-25],[45,-25],[43,-18]],
+  [[-24,65],[-18,66],[-14,65],[-18,63],[-22,64]],
+  [[-5,50],[-5,58],[-3,59],[0,53],[1,51]],
+  [[-10,52],[-10,55],[-6,55],[-6,52]],
+  [[-85,22],[-78,23],[-74,20],[-80,20]],
+  [[80,9],[82,8],[81,6],[80,7]],
+];
+
+/* 陆地掩膜（Uint8，0 或 255），构建一次并缓存。
+   用 canvas path fill 光栅化——不能逐像素做点在多边形内判断（见上）。 */
+let LANDMASK = null;
+function buildLandMask(W, H){
+  if(LANDMASK && LANDMASK.length === W*H) return LANDMASK;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff';
+  g.beginPath();
+  for(const poly of CONTINENTS){
+    poly.forEach((p,i)=>{
+      const x = (p[0]+180)/360*W, y = (90-p[1])/180*H;
+      i ? g.lineTo(x,y) : g.moveTo(x,y);
+    });
+    g.closePath();
+  }
+  g.fill();
+  const d = g.getImageData(0,0,W,H).data;
+  const m = new Uint8Array(W*H);
+  for(let i=0;i<W*H;i++) m[i] = d[i*4] > 127 ? 255 : 0;
+  LANDMASK = m;
+  return m;
+}
+/** u,v∈[0,1] → 陆地掩膜值（1=陆地，0=海洋；带轻微噪声便于分带着色）。
+ *  earthSurface 与 earthNight 共用它，保证夜面灯光绝不画到海上。 */
+function earthLandField(u, v){
+  if(!LANDMASK) return 0;
+  const x = clamp(Math.round(u*(TEXW-1)), 0, TEXW-1);
+  const y = clamp(Math.round(v*(TEXH-1)), 0, TEXH-1);
+  if(!LANDMASK[y*TEXW+x]) return 0;
+  return 1 + (noise2(u*24, v*12, 1, 4)-0.5)*0.14;
+}
+const EARTH_LAND = 0.5;
+
+/* ---------- 地球仪贴图 ----------
+   之前是「噪声陆地 + 手绘极冠 + 无网格」，看起来像一颗随机花纹的绿球。
+   现在按地球仪的方式绘制，顺序很重要：
+     ① 海洋：按深度分三档（深海 / 大陆架 / 浅海），真实地球 71% 是海
+     ② 陆地：从 CONTINENTS 光栅化掩膜，**按纬度分带**上色
+        （真实植被确实随纬度分带：赤道雨林深绿 → 副热带荒漠黄 →
+         中纬草原黄绿 → 亚寒带针叶林暗绿 → 极地苔原灰 → 冰盖白）
+     ③ 海岸线：比陆地亮一档的浅色（真实卫星图上海岸带最亮）
+     ④ 经纬网格：每 15° 一条，半透明 —— 这是「地球仪」辨识度的关键
+     ⑤ 极冠：南极是大陆冰盖、北极是浮冰，形状不同
+   陆地掩膜只做一次 canvas 光栅化，全靠 getImageData 逐像素上色，
+   1024×512 = 52 万像素，纯查表 + 少量算术，几十毫秒完成。 */
+function earthSurface(W,H){
+  buildLandMask(W,H);
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.fillStyle='#0a2a52'; g.fillRect(0,0,W,H);          // 深海基础色（B 明显高于 R）
+
+  /* ---------- 逐像素：海洋深度 + 陆地分带 ---------- */
+  const img=g.getImageData(0,0,W,H), d=img.data;
+  for(let y=0;y<H;y++){
+    const lat = 90 - (y+0.5)/H*180;                     // +90(北) .. -90(南)
+    const alat = Math.abs(lat);
+    for(let x=0;x<W;x++){
+      const u=(x+0.5)/W, i=(y*W+x)*4;
+      // 大陆架：在陆地掩膜膨胀带内（掩膜本身没有距离信息，用横向 3 像素
+      // 抽样近似判断「是否靠近陆地」——足够表现浅海大陆架的环带）
+      let near=false;
+      for(let k=-3;k<=3;k++){
+        const xx=clamp(x+k,0,W-1);
+        if(LANDMASK[y*W+xx]){ near=true; break; }
+      }
+      if(LANDMASK[y*W+x]){
+        // ---- 陆地：纬度分带 ----
+        const n = noise2(u*30, (y/H)*15, 1, 4);        // 植被斑块噪声
+        let r,gg,b;
+        if(alat > 66){                     // 极地冰盖（格陵兰 / 南极）
+          r=228; gg=234; b=238;
+          if(lat < -60 && n > 0.55){ r=244; gg=246; b=248; }   // 南极冰盖更亮更白
+        }else if(alat > 58){               // 亚寒带针叶林 / 苔原
+          r=74+n*38; gg=86+n*30; b=62+n*22;
+          if(alat>64){ r=132+n*40; gg=134+n*30; b=120+n*24; } // 苔原转灰
+        }else if(alat > 45){               // 温带阔叶林
+          r=88+n*44; gg=112+n*40; b=52+n*26;
+        }else if(alat > 33){               // 副热带：荒漠带（撒哈拉 / 阿拉伯）
+          r=176+n*48; gg=152+n*42; b=98+n*36;
+        }else if(alat > 23){               // 亚热带草原
+          r=150+n*46; gg=146+n*44; b=84+n*32;
+        }else if(alat > 11){               // 热带季风区
+          r=96+n*52; gg=132+n*44; b=44+n*26;
+        }else{                             // 赤道雨林（最深绿）
+          r=44+n*40; gg=92+n*46; b=34+n*24;
+        }
+        d[i]=r; d[i+1]=gg; d[i+2]=b; d[i+3]=255;
+      }else if(near){
+        // ---- 大陆架浅海：真实卫星图上海岸带是浅蓝/青绿 ----
+        const t = noise2(u*40, (y/H)*20, 1, 3);
+        d[i]=18+t*22; d[i+1]=82+t*44; d[i+2]=126+t*40; d[i+3]=255;
+      }else{
+        // ---- 深海：低纬更蓝，高纬偏冷灰 ----
+        const t = noise2(u*8, (y/H)*4, 1, 4);
+        d[i]  = 8+t*10;
+        d[i+1] = 30+t*22+alat*0.35;
+        d[i+2] = 74+t*26+alat*0.30;
+        d[i+3]=255;
+      }
+    }
+  }
+  g.putImageData(img,0,0);
+
+  /* ---------- 海岸线：浅色描边（真实卫星图最明显的特征之一） ---------- */
+  g.lineWidth=1.4; g.strokeStyle='rgba(190,214,190,0.42)';
+  for(let y=1;y<H;y++)for(let x=1;x<W;x++){
+    const here=LANDMASK[y*W+x];
+    if(!here) continue;
+    if(!LANDMASK[y*W+x-1] || !LANDMASK[y*W+x+1] ||
+       !LANDMASK[(y-1)*W+x] || !LANDMASK[(y+1)*W+x]){
+      g.fillStyle='rgba(196,220,196,0.40)';
+      g.fillRect(x,y,1,1);
+    }
+  }
+
+  /* ---------- 经纬网格：地球仪的灵魂 ----------
+     每 15° 一条经纬线，30°/45° 的主线更亮。
+     等距柱状投影下**纬线就是水平直线**（长度按 cos(lat) 收缩）——
+     之前误用 ellipse 画椭圆，参数个数也不对，直接画线段才是精确的。 */
+  for(let lat=-75; lat<=75; lat+=15){
+    const Y = (90-lat)/180*H;
+    const half = W/2*Math.abs(Math.cos(lat*D2R));
+    const major = lat%45===0;
+    g.strokeStyle = major ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.10)';
+    g.lineWidth   = major ? 1.4 : 1.0;
+    g.beginPath(); g.moveTo(W/2-half, Y); g.lineTo(W/2+half, Y); g.stroke();
+  }
+  // 赤道 / 本初子午线 加重
+  g.strokeStyle='rgba(255,255,255,0.26)'; g.lineWidth=1.6;
+  g.beginPath(); g.moveTo(0,H/2); g.lineTo(W,H/2); g.stroke();
+  g.beginPath(); g.moveTo(W/2,0); g.lineTo(W/2,H); g.stroke();
+  // 经线：每隔 15° 一条，纬度方向按 cos 收缩
+  for(let lon=0;lon<360;lon+=15){
+    const major = lon%45===0;
+    g.strokeStyle = major ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.09)';
+    g.lineWidth = major ? 1.3 : 0.9;
+    g.beginPath();
+    for(let y=0;y<=H;y+=2){
+      const lat = 90 - y/H*180;
+      const px = W/2 + (lon/360)*W*Math.cos(lat*D2R);
+      y ? g.lineTo(px,y) : g.moveTo(px,y);
+    }
+    g.stroke();
+  }
+
+  /* ---------- 极冠细节：北极是浮冰（碎块状），南极是连续冰盖 ---------- */
+  g.fillStyle='rgba(238,244,246,0.92)';
+  g.beginPath(); g.moveTo(0,0); g.lineTo(W,0);
+  g.lineTo(W,H*0.055); g.ellipse(W*0.5,H*0.055,W*0.30,H*0.05,0,0,PI);
+  g.closePath(); g.fill();
+  g.fillStyle='rgba(232,240,242,0.85)';
+  g.beginPath(); g.moveTo(0,H); g.lineTo(W,H);
+  g.lineTo(W,H*0.90); g.ellipse(W*0.5,H*0.90,W*0.46,H*0.13,0,0,PI,true);
+  g.closePath(); g.fill();
+  // 冰缘碎块
+  for(let i=0;i<90;i++){
+    const north = rnd()>0.45;
+    const y = north ? H*(0.01+rnd()*0.05) : H*(0.92+rnd()*0.08);
+    g.fillStyle='rgba(226,238,242,'+(0.25+rnd()*0.5)+')';
+    g.beginPath(); g.ellipse(rnd()*W, y, 14+rnd()*54, 2+rnd()*7, 0,0,7); g.fill();
+  }
+  return c;
+}
+
+/** 地球夜面城市灯光（自发光贴图）——只画在陆地上，靠陆地掩膜裁剪 */
+function earthNight(W,H){
+  buildLandMask(W,H);
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.fillStyle='#000'; g.fillRect(0,0,W,H);
+  /* 城市坐标改成**真实经纬度**（之前是随手给的贴图坐标，
+     跟刚画好的大陆轮廓完全对不上 —— 灯会亮在海里或者内陆荒地）。
+     格式 [经度, 纬度, 相对半径(度), 强度] */
+  const CITIES=[
+    [117,35,6,1.00],[121,31,5,0.95],[113,23,5,0.95],[104,30,5,0.85], // 中国东部/南部/西部
+    [114,38,4,0.70],[87,44,3,0.45],                                    // 华北/东北/新疆
+    [139,36,4,0.90],[135,34,3,0.80],                                    // 日本关东/近畿
+    [126,37,4,0.85],                                                    // 韩国首尔
+    [77,28,5,0.95],[73,19,4,0.80],[80,13,4,0.70],[88,23,4,0.85],       // 印度
+    [2,49,4,0.85],[11,51,4,0.80],[-1,52,3,0.75],[-3,40,3,0.60],       // 西欧
+    [4,52,3,0.80],[12,52,3,0.70],                                      // 低地国家/柏林
+    [37,56,3,0.70],[30,50,3,0.60],[28,41,4,0.75],                      // 莫斯科/基辅/伊斯坦布尔
+    [31,30,3,0.65],[51,36,3,0.55],[44,34,2,0.45],                      // 开罗/德黑兰/迪拜
+    [-74,41,5,0.95],[-77,39,3,0.75],[-88,42,4,0.80],[-79,43,4,0.85],  // 美东/五大湖
+    [-95,30,4,0.75],[-96,33,3,0.65],[-118,34,4,0.85],[-122,38,4,0.85],// 美中/加州/湾区
+    [-104,40,3,0.55],[-84,34,3,0.65],[-80,26,3,0.65],                 // 落基/东南
+    [-99,19,4,0.80],[-46,-24,4,0.80],[-58,-35,3,0.70],[-70,-33,3,0.60],// 墨西哥/圣保罗/布宜诺斯
+    [28,-26,3,0.60],[18,-34,2,0.50],                                   // 南非
+    [107,-6,3,0.85],[101,14,3,0.70],[121,14,4,0.80],                  // 印尼/马尼拉
+    [151,-34,3,0.70],[145,-38,2,0.55],                                 // 悉尼/墨尔本
+  ];
+  g.globalCompositeOperation='lighter';
+  CITIES.forEach(([lon,lat,spread,power])=>{
+    const cu=(lon+180)/360*W, cv=(90-lat)/180*H;
+    const rr=spread/180*H;
+    for(let i=0;i<80;i++){
+      const a=rnd()*Math.PI*2, r=Math.pow(rnd(),0.55)*rr;
+      const x=cu+Math.cos(a)*r, y=cv+Math.sin(a)*r;
+      if(x<0||x>=W||y<0||y>=H) continue;
+      if(LANDMASK[(y|0)*W+(x|0)] === 0) continue;      // 只在陆地
+      const s=Math.pow(rnd(),2.2);
+      g.globalAlpha=0.10+power*0.55*s;
+      g.fillStyle='#ffd9a0';
+      g.beginPath(); g.arc(x,y,0.6+s*2.4,0,7); g.fill();
+    }
+  });
+  // 沿岸线密集带：真实夜面灯光高度集中在海岸（港口城市）
+  g.globalAlpha=0.30;
+  g.fillStyle='#ffdca8';
+  for(let y=1;y<H;y++)for(let x=1;x<W;x++){
+    if(!LANDMASK[y*W+x]) continue;
+    if(!LANDMASK[y*W+x+1] && rnd()>0.986){
+      g.fillRect(x,y,1+rnd()*2,1);
+    }
+  }
+  g.globalCompositeOperation='source-over'; g.globalAlpha=1;
+  return c;
+}
+
+/** 地球云层（独立球壳，自转速度与地表略有差异——真实赤道 ~15°/h 高纬更慢） */
+function earthClouds(W,H){
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.clearRect(0,0,W,H);
+  /* 纬度带权重必须**平滑插值**：早先用阶跃查找表，band 从 0.25 跳到 0.85 时
+     alpha 整条纬度线突变，画面上就是几道笔直的平行白带。
+     真实云系由行星自转 + 盛行风组织成**纬向拉长的长条与涡旋**，
+     所以噪声频率必须经向低、纬向高（之前正好写反了：7 vs 3.6）。*/
+  const smoothBand = lat=>{
+    // 控制点：[纬度(0=赤道), 权重]，段内用 smoothstep 过渡
+    const KP=[[0.00,0.80],[0.10,0.30],[0.26,0.22],   // 副热带高压带：晴空少云
+              [0.38,0.55],[0.56,0.90],               // 中纬风暴带 + 海洋辐合
+              [0.74,0.55],[0.88,0.60],[1.00,0.42]]; // 极区
+    for(let i=0;i<KP.length-1;i++){
+      const [a2,w1]=KP[i], [b2,w2]=KP[i+1];
+      if(lat<=b2){
+        const t=(lat-a2)/(b2-a2), s=t*t*(3-2*t);
+        return w1+(w2-w1)*s;
+      }
+    }
+    return KP[KP.length-1][1];
+  };
+  const img=g.createImageData(W,H), d=img.data;
+  for(let y=0;y<H;y++){
+    const lat=Math.abs(y/H-0.5)*2;                 // 0=赤道 1=极
+    const band=smoothBand(lat);
+    // 中纬海洋更多 → 云更多（真实：海洋风暴带云量远高于陆地）
+    const boost=1+0.35*Math.max(0,0.6-Math.abs(lat-0.56)*2.4);
+    /* target 是**阈值**：噪声 v 超过它才出云。抬到 0.60 → 0.66 让云量整体
+       收敛，地球仪的大陆轮廓才透得出来（原来 0.35~0.50 铺得太满）。 */
+    const target=0.60-0.11*band*boost;
+    for(let x=0;x<W;x++){
+      // 各向异性 fbm：纬向频率 4× 于经向 → 云被拉成东西向长条
+      let n=0,a=1,f=1,norm=0;
+      const sx=x/W*4.5, sy=y/H*18;
+      for(let o=0;o<4;o++){
+        const xi=Math.floor(sx*f), yi=Math.floor(sy*f);
+        const xf=sx*f-xi, yf=sy*f-yi;
+        const u=xf*xf*(3-2*xf), t=yf*yf*(3-2*yf);
+        const h=(a2,b2)=>{ let n2=(a2*374761393+b2*668265263+seed*99991)&0x7fffffff;
+          n2=(n2^(n2>>13))*1274126177&0x7fffffff; return ((n2^(n2>>16))&0xffff)/65535; };
+        n+=a*((h(xi,yi)*(1-u)+h(xi+1,yi)*u)*(1-t)+(h(xi,yi+1)*(1-u)+h(xi+1,yi+1)*u)*t);
+        norm+=a; a*=0.55; f*=2.2;
+      }
+      let v=n/norm;
+      /* 中纬气旋：南北半球各一列旋转涡旋（真实：温带气旋与反气旋交替） */
+      const mid=Math.max(0,1-Math.abs(lat-0.55)*3.2);
+      v += 0.13*Math.sin(sx*7.5+1.3)*Math.cos(sy*3.1)*mid*Math.sign(0.5-y/H||1);
+      // 热带辐合带附近的深对流云团
+      const itcz=Math.max(0,1-Math.abs(lat-0.04)*11);
+      v += 0.10*Math.sin(sx*11+2.1)*Math.sin(sy*5.5)*itcz;
+      const alpha=Math.max(0, Math.min(1, (v-target)*7))*Math.min(1, band*boost);
+      const i=(y*W+x)*4;
+      d[i]=d[i+1]=d[i+2]=255;
+      d[i+3]=alpha*255;
+    }
+  }
+  g.putImageData(img,0,0);
+  return c;
+}
+
+// 火星：氧化铁红 + 水手谷 + 奥林帕斯山 + 极冠（真实：南冠大、北冠小）
+function marsSurface(W,H){
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.fillStyle='#a85436'; g.fillRect(0,0,W,H);
+  fbmFill(g,W,H,3,5,'#7d3b23','#c26a45',0.7);
+  // 暗色玄武岩区（真实：塞壬平原、希腊平原）
+  g.globalAlpha=0.26;
+  for(let i=0;i<16;i++){
+    g.fillStyle=['#6d3320','#5a2a1a','#7f4028'][Math.floor(rnd()*3)];
+    g.beginPath(); g.ellipse(rnd()*W,rnd()*H,30+rnd()*120,16+rnd()*60,0,0,7); g.fill();
+  }
+  // 水手谷：横跨赤道的巨型峡谷
+  g.globalAlpha=0.5; g.strokeStyle='#6b2d1c'; g.lineCap='round';
+  g.lineWidth=H*0.05;
+  g.beginPath(); g.moveTo(W*0.14,H*0.60);
+  g.bezierCurveTo(W*0.32,H*0.52, W*0.36,H*0.70, W*0.52,H*0.63); g.stroke();
+  g.lineWidth=H*0.018; g.globalAlpha=0.35;
+  g.strokeStyle='#a8644a';
+  g.beginPath(); g.moveTo(W*0.14,H*0.605);
+  g.bezierCurveTo(W*0.32,H*0.525, W*0.36,H*0.705, W*0.52,H*0.635); g.stroke();
+  // 奥林帕斯山 + 塔尔西斯隆起
+  g.globalAlpha=0.6;
+  g.fillStyle='#8a5a3a';
+  g.beginPath(); g.ellipse(W*0.30,H*0.37,W*0.075,H*0.055,0,0,7); g.fill();
+  g.globalAlpha=0.30; g.fillStyle='#c08058';
+  g.beginPath(); g.ellipse(W*0.285,H*0.362,W*0.045,H*0.032,0,0,7); g.fill();
+  g.globalAlpha=1;
+  // 南极冠：真实大而偏同心；北极冠小
+  g.save();
+  g.beginPath(); g.rect(0,0,W,H); g.clip();
+  g.fillStyle='#f4f2ee';
+  g.beginPath(); g.ellipse(W*0.5,H*0.985,W*0.40,H*0.14,0,0,7); g.fill();
+  g.fillStyle='#e8ecec';
+  g.beginPath(); g.ellipse(W*0.5,H*0.985,W*0.46,H*0.17,0,0,7); g.fill();
+  g.fillStyle='#f6f4f0';
+  g.beginPath(); g.ellipse(W*0.5,H*0.99,W*0.34,H*0.11,0,0,7); g.fill();
+  g.fillStyle='#eef2f0';
+  g.beginPath(); g.ellipse(W*0.5,H*0.008,W*0.28,H*0.055,0,0,7); g.fill();
+  g.restore();
+  craters(g,W,H,150,1.5,15,true);
+  return c;
+}
+
+/* 气态巨行星通用：纬向云带 + 湍流 + 剪切涡旋
+ *
+ * 物理：木/土/天的云带是**纬向剪切流**造成的 —— 东西向风在不同纬度上
+ * 速度不同，交界面上形成 Kelvin–Helmholtz 剪切不稳定，卷成**沿纬向拉长**
+ * 的涡旋。所以噪声必须**经向低频、纬向高频**（在单位球面上纬向被拉成
+ * 一条条横带），涡旋也必须画成扁的（长轴沿经度）。
+ *
+ * 反例（曾经的写法）：用随机细线沿经度乱画 120 条 —— 那既不是纬向拉长，
+ * 又把底下的云带彻底盖住，贴图导出一看就是一团乱线球，完全不是木星。
+ * 云带本身必须清晰可辨，涡旋只在带与带的交界处轻微起伏。 */
+function gasSurface(W,H,cfg){
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  const bands=cfg.bands;                            // [位置, 颜色, 相对宽度, 强度]
+  const shearX = cfg.shearX==null ? 3.0 : cfg.shearX;   // 经向频率：低
+  const shearY = cfg.shearY==null ? 16.0 : cfg.shearY;  // 纬向频率：高
+  const img=g.createImageData(W,H), d=img.data;
+  const col=new THREE.Color();
+  // 色带颜色预解析成 Color 对象。原写法在内层循环里 new THREE.Color(bcol)，
+  // 1024×512 像素 × 11 张贴图 × 4~5 条带 ≈ 576 万次分配，实测多耗 ~1.3 秒。
+  const bandCols = bands.map(b => new THREE.Color(b[1]));
+  for(let y=0;y<H;y++){
+    const t=y/H;
+    /* 基础色只跟纬度有关（x 无关），所以整行算一次即可 ——
+       原实现在内层 x 循环里算，纯属重复。 */
+    col.set(cfg.base);
+    for(let i=0;i<bands.length;i++){
+      const [pos,bcol,bw,bi]=bands[i];
+      const dd=Math.abs(t-pos);
+      if(dd<bw) col.lerp(bandCols[i], (1-dd/bw)*bi);
+    }
+    const cr=col.r*255, cg=col.g*255, cb=col.b*255;
+    for(let x=0;x<W;x++){
+      // 纬向剪切噪声：经向平缓、纬向密变 → 云带被拉成横向长条
+      const n = noise2(x/W*shearX, t*shearY, 1, 4) - 0.5;
+      // 大尺度亮度起伏（带与带之间的整体明暗差）
+      const m = noise2(x/W*shearX*0.35+13.7, t*shearY*0.30+41.2, 1, 2) - 0.5;
+      const k = 1 + n*cfg.turb*1.6 + m*cfg.turb*1.1;
+      const o=(y*W+x)*4;
+      d[o]  =Math.max(0,Math.min(255,cr*k));
+      d[o+1]=Math.max(0,Math.min(255,cg*k));
+      d[o+2]=Math.max(0,Math.min(255,cb*k));
+      d[o+3]=255;
+    }
+  }
+  g.putImageData(img,0,0);
+  /* 剪切涡旋：只画在**带的交界处**（那里才有速度梯度），且长轴沿经度。
+     真实的木星涡旋是带边界上的小卷曲，不是满屏乱线。 */
+  g.globalAlpha=cfg.turb*0.9;
+  for(let i=0;i<(cfg.swirls||0);i++){
+    // 选一条带的边界作为涡旋纬度
+    const bi2 = (rnd()*bands.length)|0;
+    const edge = bands[bi2][0] + (rnd()<0.5?-1:1)*bands[bi2][2]*(0.7+rnd()*0.5);
+    const y0=Math.max(0,Math.min(H-1, edge*H));
+    const x0=rnd()*W;
+    const len=W*(0.10+rnd()*0.30);                    // 沿经度：长
+    const amp=H*(0.010+rnd()*0.022);                  // 沿纬向：扁（关键）
+    g.strokeStyle=rnd()>0.5?'#ffffff':'#000000';
+    g.lineWidth=1+rnd()*3;
+    g.beginPath();
+    const ph=rnd()*6.28, ph2=rnd()*6.28;
+    for(let x=0;x<=len;x+=3){
+      const t2=x/len;
+      const yy=y0+Math.sin(t2*5+ph)*amp+Math.sin(t2*13+ph2)*amp*0.45;
+      x0+x<W ? g.lineTo(x0+x,yy) : g.moveTo((x0+x)%W,yy);   // 经向环绕
+    }
+    g.stroke();
+  }
+  g.globalAlpha=1;
+  (cfg.spots||[]).forEach(s=>{
+    if(s.type==='oval'){                            // 大红斑/白椭圆
+      const sx=s.x*W, sy=s.y*H, rx=s.rx*W, ry=s.ry*H;
+      for(let k=14;k>0;k--){                        // 外围晕
+        g.globalAlpha=0.05*14/k;
+        g.fillStyle=s.ring;
+        g.beginPath(); g.ellipse(sx,sy,rx*k/7,ry*k/7,0,0,7); g.fill();
+      }
+      g.globalAlpha=1;
+      g.fillStyle=s.core;
+      g.beginPath(); g.ellipse(sx,sy,rx,ry,0,0,7); g.fill();
+      g.globalAlpha=0.55; g.fillStyle=s.inner;
+      g.beginPath(); g.ellipse(sx,sy,rx*0.72,ry*0.66,0,0,7); g.fill();
+      g.globalAlpha=0.3; g.fillStyle='#ffffff';
+      g.beginPath(); g.ellipse(sx-rx*0.2,sy-ry*0.22,rx*0.34,ry*0.28,0,0,7); g.fill();
+      g.globalAlpha=1;
+    } else if(s.type==='dark'){                     // 大暗斑（海王星）
+      const sx=s.x*W, sy=s.y*H, rx=s.rx*W, ry=s.ry*H;
+      for(let k=12;k>0;k--){
+        g.globalAlpha=0.045*12/k; g.fillStyle=s.core;
+        g.beginPath(); g.ellipse(sx,sy,rx*k/6,ry*k/6,0,0,7); g.fill();
+      }
+      g.globalAlpha=1;
+    } else if(s.type==='cirrus'){                   // 高空甲烷卷云（白色）
+      const sx=s.x*W, sy=s.y*H, rx=s.rx*W, ry=s.ry*H;
+      g.globalAlpha=0.30;
+      for(let k=6;k>0;k--){
+        g.fillStyle=s.core;
+        g.beginPath(); g.ellipse(sx,sy,rx*k/6,ry*k/6,0,0,7); g.fill();
+      }
+      g.globalAlpha=1;
+    }
+  });
+  return c;
+}
+
+/** 冥王星：汤博区（暗红褐）+ 心形斯普特尼克冰原（极亮氮冰） */
+function plutoSurface(W,H){
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.fillStyle='#c8b49a'; g.fillRect(0,0,W,H);
+  fbmFill(g,W,H,3.5,5,'#8d6f56','#e0d0b8',0.65);
+  // 汤博区：真实的暗红褐色区
+  g.globalAlpha=0.4; g.fillStyle='#7a4f3c';
+  g.beginPath(); g.ellipse(W*0.52,H*0.44,W*0.24,H*0.19,0.2,0,7); g.fill();
+  g.globalAlpha=1;
+  // 斯普特尼克冰原：心形氮冰甲烷冰，反照率极高
+  g.save();
+  g.translate(W*0.30,H*0.58); g.scale(1,0.92);
+  g.fillStyle='#f2f4ee';
+  g.beginPath();
+  g.moveTo(0,0.10);
+  g.bezierCurveTo(-0.16,-0.02, -0.13,-0.14, -0.05,-0.09);
+  g.bezierCurveTo(-0.01,-0.16, 0.10,-0.16, 0.11,-0.05);
+  g.bezierCurveTo(0.20,-0.10, 0.24,0.03, 0.12,0.12);
+  g.closePath();
+  g.fill();
+  g.globalAlpha=0.45; g.fillStyle='#ffffff';
+  g.beginPath(); g.ellipse(-0.02,-0.02,0.10,0.06,0,0,7); g.fill();
+  g.globalAlpha=1;
+  g.restore();
+  craters(g,W,H,110,1.5,13,true);
+  return c;
+}
+
+/* ============================================================
+   贴图装配
+   每颗天体产出：{ map 反照率色, normal 法线 }
+   高度图直接从已画好的颜色图推导（亮度≈起伏），省一套绘制逻辑。
+   ============================================================ */
+const TEXW = 1024, TEXH = 512;
+
+/** sRGB 编码值 ↔ 线性反射率（Rec.709 亮度）
+ *  l2s 允许 >1 的输入（超范围不截断）：反照率标定刻意保留色度，
+ *  高反照率天体的亮通道会溢出，交给渲染端 ACES 色调映射滚降。 */
+function s2l(v){ v/=255; return v<=0.04045 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); }
+function l2s(v){ if(v<=0) return 0;
+  return 255*(v<=0.0031308 ? v*12.92 : 1.055*Math.pow(v,1/2.4)-0.055); }
+function lumaLin(r,g,b){ return 0.2126*s2l(r)+0.7152*s2l(g)+0.0722*s2l(b); }
+
+/* ---------- 反照率标定（关键） ----------
+   为什么必须做：几何反照率是**线性**反射率（0~1），而 canvas 里存的是
+   sRGB 编码值（0~255）。直接把贴图灰度当反照率用会整体偏亮一大截，
+   结果就是「月球比水星亮」「地球比火星暗」这种违背物理的排序。
+
+   目标值取自 JPL SSD 几何反照率（与 Bond 反照率的区别：前者就是
+   「零相位角时反射回观察者的光比」，正是肉眼看到的屏幕观感）。
+
+   **为什么不在贴图里直接改像素**：canvas 是 8 位，sRGB 编码值上限 255。
+   深色天体（海王星反照率 0.442）要提到目标亮度必须放大 2~3 倍，
+   亮通道一旦溢出就被截断 → 色度被削掉，深蓝被洗成淡蓝
+   （实测饱和度 0.64 → 0.18，天王星/海王星的真实差异直接消失）。
+
+   正确做法：**贴图保持原始色度不变，只解出一个标量增益 k，
+   在着色器里乘上去**。这样通道比例 100% 保留，而超过 1 的部分
+   交给渲染端的 ACES Filmic 色调映射滚降——真实相机传感器过曝时
+   也是这么做的，不是硬截断。                                     */
+function calibrateAlbedo(src, target){
+  if(!(target>0)) return 1;
+  const g=src.getContext('2d');
+  const d=g.getImageData(0,0,src.width,src.height).data;
+  let sum=0, n=0;
+  for(let i=0;i<d.length;i+=52){            // 抽稀采样足够
+    if(d[i+3]<250) continue;
+    sum += lumaLin(d[i],d[i+1],d[i+2]); n++;
+  }
+  if(!n) return 1;
+  return target/(sum/n);                     // ← 纯标量，不动像素
+}
+
+/* 贴图标定目标：几何反照率（NASA Planetary Fact Sheet / JPL SSD）
+   —— 选它而非 Bond 反照率，因为几何反照率按定义就是「零相位角时反射回
+   观察者的光比」，正是肉眼看到的亮度，与屏幕观感一一对应。
+
+   偏离项都要写明原因，不能凭手感：
+     地球 0.30 —— 0.434 的圆盘值含瑞利散射与云，本贴图只画地表+轻云
+     土星 0.42 —— 0.499 的圆盘值被环系抬高，云顶本体约 0.40
+     海王星/天王星 0.27/0.30（真实 0.442/0.488）——
+       冰巨星要保住「海王星明显比天王星深」这个身份特征。
+       注意：曾经把木星也按同样理由降到 0.46，那是**误判**——
+       木星发白的真因不是标定值，而是贴图本身画错了
+       （gasSurface 用随机细线乱画 120 条，把纬向云带盖成了一团乱线球）。
+       贴图修好后 + 曝光从 0.92 压到 0.62，木星已能用真实值 0.538。      */
+const ALBEDO_TEX = {
+  水星:0.142, 金星:0.689, 地球:0.300, 火星:0.170,
+  木星:0.538, 土星:0.420, 天王星:0.300, 海王星:0.270, 冥王星:0.520, 月球:0.120
+};
+/** 颜色 canvas → 高度 canvas（取亮度当高度，配合陨石坑的明暗即可） */
+function luminanceAsHeight(src){
+  const W=src.width, H=src.height;
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const sd=src.getContext('2d').getImageData(0,0,W,H).data;
+  const img=c.getContext('2d').createImageData(W,H), d=img.data;
+  for(let i=0;i<d.length;i+=4){
+    // 绿通道 + 部分亮度混合，让色相差异也能贡献起伏
+    const l=sd[i]*0.30+sd[i+1]*0.59+sd[i+2]*0.11;
+    d[i]=d[i+1]=d[i+2]=l; d[i+3]=255;
+  }
+  c.getContext('2d').putImageData(img,0,0);
+  return c;
+}
+function canvasTex(c){
+  const t=new THREE.CanvasTexture(c);
+  t.encoding=THREE.sRGBEncoding;
+  t.wrapS=THREE.RepeatWrapping;
+  t.anisotropy=renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+/** 组装一个天体的贴图集合。
+ *  返回 {map, normal, gain}：gain 是反照率标定解出的**标量增益**，
+ *  由材质在 shader 里乘到贴图上（不改像素，保住色度）。 */
+function buildTex(surfaceFn, bumpStrength, albedo){
+  const c = surfaceFn(TEXW, TEXH);
+  const h = bumpStrength ? luminanceAsHeight(c) : null;
+  const map = canvasTex(c);
+  const gain = albedo ? calibrateAlbedo(c, albedo) : 1;
+  if(!bumpStrength) return {map, normal:null, gain};
+  return {map, normal: normalFromHeight(h, bumpStrength*7.0), gain};
+}
+/** 气态行星只有颜色贴图（云不是地面，无地形法线），同样走反照率标定 */
+function gasTex(cfg, albedo){
+  const c = gasSurface(TEXW, TEXH, cfg);
+  return {map: canvasTex(c), normal:null, gain: calibrateAlbedo(c, albedo)};
+}
+
+const TEX = {};
+TEX.sun = {map: canvasTex(gasSurface(TEXW, TEXH, {
+  base:0xfff3c0, turb:0.16, swirls:60,
+  shearX:2.0, shearY:13,
+  bands:[[0.20,'#ffd257',0.10,0.55],[0.34,'#ffb03a',0.09,0.5],
+         [0.50,'#ff8c1e',0.12,0.6],[0.66,'#ffc247',0.09,0.5],
+         [0.80,'#ff9c28',0.10,0.55]],
+  spots:[]})), normal:null};
+
+TEX.merc  = buildTex(mercSurface,  PHYS['水星'].bump, ALBEDO_TEX.水星);
+TEX.moon  = buildTex(moonSurface,  PHYS['月球'].bump, ALBEDO_TEX.月球);
+TEX.venus = buildTex(venusSurface, 0, ALBEDO_TEX.金星);   // 云层无地形起伏
+TEX.earth = buildTex(earthSurface, 0, ALBEDO_TEX.地球);   // 地球用海洋镜面而非凹凸
+TEX.mars  = buildTex(marsSurface,  PHYS['火星'].bump, ALBEDO_TEX.火星);
+
+/* 木星：真实条带是氨冰云层的纬向环流，明暗对比强。
+ * 配色取真实的带系结构 —— 褐色带（belt）与奶白色区（zone）相间：
+ * 极区灰暗、NTB/NEB 赤道褐带最宽最深、EZ（赤道区）是亮白带。
+ * 早期版本底色用 0xe4d0ae（偏亮偏黄），条带又被 ACES 洗掉，
+ * 结果整颗行星是一颗奶白球 —— 现在底色压暗、褐色带加深加宽。 */
+TEX.jup = gasTex({
+  base:0xcbb392, turb:0.16, swirls:60,
+  shearX:2.6, shearY:15,                  // 经向低频 / 纬向高频
+  bands:[[0.06,'#6b5946',0.055,0.8],      // 北极区：灰暗
+         [0.145,'#7a4f2e',0.078,1.0],     // 北温带暗带 NTB
+         [0.245,'#c9a87c',0.070,0.85],    // 北热带亮区
+         [0.345,'#6f4527',0.088,1.0],     // 北赤道暗带 NEB（最显著）
+         [0.425,'#dcc29c',0.060,0.9],     // 北赤道亮区 EZ 北侧
+         [0.50,'#e8d3ae',0.075,0.95],     // 赤道亮区 EZ（最亮）
+         [0.575,'#dcc29c',0.060,0.9],     // 南赤道亮区
+         [0.655,'#6b4225',0.088,1.0],     // 南赤道暗带 SEB
+         [0.765,'#c4a075',0.070,0.85],    // 南热带亮区
+         [0.865,'#734a29',0.072,1.0],     // 南温带暗带 STB
+         [0.955,'#685643',0.055,0.8]],    // 南极区
+  // 南半球白椭圆（真实存在）
+  spots:[{type:'oval', x:0.68, y:0.60, rx:0.075, ry:0.052,
+          core:'#b8492a', inner:'#c8623c', ring:'#d68a5e'},   // 大红斑
+         {type:'oval', x:0.30, y:0.72, rx:0.030, ry:0.020,
+          core:'#f2ecdf', inner:'#ffffff', ring:'#cfc4b0'}]}, ALBEDO_TEX.木星);
+
+// 土星：真实因高空雾霾而对比度低，条纹柔和
+TEX.sat = gasTex({
+  base:0xd6c39c, turb:0.10, swirls:40,
+  shearX:2.2, shearY:11,
+  bands:[[0.16,'#b39d72',0.075,0.5],[0.30,'#cfbc90',0.07,0.4],
+         [0.50,'#c2aa7c',0.10,0.42],     // 赤道带略暗
+         [0.70,'#cfbc90',0.07,0.4],[0.85,'#ad9770',0.07,0.5]],
+  spots:[]}, ALBEDO_TEX.土星);
+
+// 天王星：真实特征是**几乎完全无条纹**（旅行者2号只看到一颗素球）
+/* 天王星：真实特征是**几乎完全无条纹**（旅行者2号只看到一颗素球）
+   淡青绿来自雾霾层对红光的弱吸收 + 甲烷吸收，R 通道略低于 G/B 即可。*/
+TEX.ura = gasTex({
+  base:0x7fc8cc, turb:0.045, swirls:12,                  // 极低对比
+  shearX:1.6, shearY:7,
+  bands:[[0.30,'#8ad0d4',0.16,0.16],[0.70,'#83c6cc',0.16,0.14]],
+  spots:[]}, ALBEDO_TEX.天王星);
+
+/* 海王星：甲烷吸收红光→深蓝；有薄雾霾但大气活跃（对比天王星更蓝更有结构）
+   真实海王星的深蓝来自**甲烷对红光的强吸收**——红通道极低、蓝通道高。
+   基色必须一开始就压低红通道：#3f66c8 的 R=63 其实还是偏亮，
+   标定提亮后必然洗成淡蓝。改成 R 极低 / B 主导的深蓝。*/
+TEX.nep = gasTex({
+  base:0x1b3a8e, turb:0.13, swirls:80,
+  shearX:2.8, shearY:17,
+  bands:[[0.18,'#20459c',0.09,0.45],[0.38,'#152f7d',0.10,0.5],
+         [0.58,'#2a55b4',0.09,0.4],[0.80,'#102468',0.10,0.5]],
+  spots:[{type:'dark',  x:0.36, y:0.62, rx:0.075, ry:0.045, core:'#0d1a4a'},  // 大暗斑
+         {type:'cirrus',x:0.42, y:0.44, rx:0.055, ry:0.022, core:'#dce8ff'},  // 高空甲烷卷云
+         {type:'cirrus',x:0.68, y:0.34, rx:0.040, ry:0.018, core:'#cfdcff'}]},
+  ALBEDO_TEX.海王星);
+
+TEX.plu = buildTex(plutoSurface, PHYS['冥王星'].bump, ALBEDO_TEX.冥王星);
+// 地球的独立云层与夜面灯光
+TEX.earthClouds = canvasTex(earthClouds(TEXW, TEXH));
+TEX.earthNight  = canvasTex(earthNight(TEXW, TEXH));
+
+
+/* ---------- 太阳 ---------- */
+const sunGroup = new THREE.Group(); scene.add(sunGroup);
+/** 太阳表面：米粒组织 + 边缘昏暗（limb darkening，真实太阳边缘亮度低 ~30%） */
+function sunSurface(W,H){
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d');
+  g.fillStyle='#ffd98a'; g.fillRect(0,0,W,H);
+  // 米粒组织（granulation）：太阳光球 convective cells
+  const img=g.getImageData(0,0,W,H), d=img.data;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const n=noise2(x/W*26, y/H*13, 4, 4);
+    const n2=noise2(x/W*60, y/H*30, 3, 3);
+    const v=(n-0.5)*0.75 + (n2-0.5)*0.45;
+    const i=(y*W+x)*4;
+    d[i]  =Math.max(0,Math.min(255, 255 + v*90));
+    d[i+1]=Math.max(0,Math.min(255, 217 + v*85));
+    d[i+2]=Math.max(0,Math.min(255, 138 + v*95));
+  }
+  g.putImageData(img,0,0);
+  // 超米粒组织（supergranulation）：更大的暖色团块
+  g.globalAlpha=0.30;
+  for(let i=0;i<26;i++){
+    const x=rnd()*W,y=rnd()*H,r=30+rnd()*95;
+    const grd=g.createRadialGradient(x,y,0,x,y,r);
+    grd.addColorStop(0, rnd()>0.5?'rgba(255,236,170,.6)':'rgba(226,140,40,.5)');
+    grd.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=grd; g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+  // 黑子：真实存在，磁场活动区，温度低 ~1500 K
+  for(let k=0;k<4;k++){
+    const x=rnd()*W, y=90+rnd()*(H-180), r=7+rnd()*16;
+    g.globalAlpha=0.55;
+    g.fillStyle='#8a4a12';
+    g.beginPath(); g.ellipse(x,y,r,r*0.72,0,0,7); g.fill();
+    g.globalAlpha=0.32; g.fillStyle='#3a1c06';
+    g.beginPath(); g.ellipse(x,y,r*0.55,r*0.40,0,0,7); g.fill();
+  }
+  g.globalAlpha=1;
+  return c;
+}
+TEX.sun = {map: canvasTex(sunSurface(TEXW, TEXH)), normal:null};
+
+/** 边缘昏暗材质：越靠近球边缘（法线越垂直视线）越暗，模拟真实太阳/恒星 */
+function limbDarkened(mapTex, strength, tint){
+  return new THREE.ShaderMaterial({
+    uniforms:{ map:{value:mapTex}, uLimb:{value:strength}, uTint:{value:new THREE.Color(tint||0xffffff)} },
+    vertexShader:`
+      varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+      void main(){
+        vUv = uv;
+        vN = normalize(normalMatrix * normal);
+        vec4 mv = modelViewMatrix * vec4(position,1.0);
+        vV = -mv.xyz;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader:`
+      uniform sampler2D map; uniform float uLimb; uniform vec3 uTint;
+      varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+      void main(){
+        vec3 tex = texture2D(map, vUv).rgb;
+        // mu = cos(观测角)：1=正对中心，0=边缘
+        float mu = clamp(dot(normalize(vN), normalize(vV)), 0.0, 1.0);
+        float limb = mix(1.0, 0.30 + 0.70*pow(mu, 0.55), uLimb);
+        gl_FragColor = vec4(tex * limb * uTint, 1.0);
+      }`
+  });
+}
+
+const sunMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 64, 48),
+  limbDarkened(TEX.sun.map, 0.85, 0xfff0cc)   // 0.85 强度，边缘降至 ~34%
+);
+sunMesh.rotation.x = PI/2;             // 贴图赤道对齐黄道
+sunGroup.add(sunMesh);
+
+const glowTex = cvTexture(256,256,(g,W,H)=>{
+  const grd=g.createRadialGradient(W/2,H/2,0,W/2,H/2,W/2);
+  grd.addColorStop(0,'rgba(255,244,214,1)');
+  grd.addColorStop(0.18,'rgba(255,206,110,.62)');
+  grd.addColorStop(0.44,'rgba(255,150,50,.20)');
+  grd.addColorStop(1,'rgba(255,120,30,0)');
+  g.fillStyle=grd; g.fillRect(0,0,W,H);
+});
+const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: glowTex, blending: THREE.AdditiveBlending, depthWrite:false, transparent:true
+}));
+/* 辉光必须**保留 depthTest**（默认 true），只用 renderOrder 排在太阳实体之后。
+   曾经试过 depthTest:false 来提亮圆盘，副作用是辉光会穿透空间把
+   金星/水星等邻近天体也罩进加色区——实测金星夜面亮度从 <40 升到 69.4，
+   夜面被凭空照亮（物理上错误，夜里不该看到行星）。
+   深度测试开着时：辉光贴着镜头的半边被太阳球面挡住，
+   只在外圈（球面轮廓之外）叠加 —— 这才是真实的光晕形态。
+   圆盘中央的亮度靠实体自身（MeshBasicMaterial + limbDarkening），
+   不依赖辉光叠加。 */
+sunGlow.renderOrder = 3;
+sunGroup.add(sunGlow);
+const corona = new THREE.Mesh(new THREE.RingGeometry(1.0,1.35,96,1),
+  new THREE.MeshBasicMaterial({color:0xffd07a, transparent:true, opacity:0.16,
+    side:THREE.DoubleSide, blending:THREE.AdditiveBlending, depthWrite:false}));
+corona.rotation.x = -PI/2;
+/* renderOrder 让三者按「实体(2) → 辉光(3) → 日冕(4)」顺序绘制。
+   配合 depthTest:false，先画实体再用加色光晕往上叠，圆盘中央才够亮。 */
+sunGlow.renderOrder  = 3;
+corona.renderOrder   = 4;
+sunGroup.add(corona);
+
+/* ---------- 天体 ---------- */
+const KINDTEX = {水星:'merc',金星:'venus',地球:'earth',火星:'mars',木星:'jup',
+                 土星:'sat',天王星:'ura',海王星:'nep',冥王星:'plu'};
+
+/* 大气层配置：真实行星的大气会因瑞利散射在边缘形成亮环（蓝/黄/白），
+   边缘越厚散射越强。thick 越大光环越明显。
+
+   悬停光圈移除后，大气壳是画面上唯一能表达「这颗有大气」的视觉元素，
+   之前 strength 只有 0.3~0.4、opacity 0.32~0.45，在深空背景上几乎看不见，
+   等于形同虚设。这里整体上调（并新增 forwardScatter 项，见下方shader）。 */
+const ATMOS = {
+  地球 : {color:0x6fa8ff, thick:0.045, power:2.4, strength:1.60, opacity:1.0, forward:0.55},
+  金星 : {color:0xffe0a0, thick:0.055, power:2.0, strength:1.45, opacity:1.0, forward:0.60},  // 厚硫酸云
+  火星 : {color:0xe8b89a, thick:0.022, power:3.0, strength:0.72, opacity:0.72, forward:0.35},  // 稀薄
+  木星 : {color:0xffe0b8, thick:0.030, power:2.8, strength:0.70, opacity:0.70, forward:0.40},
+  土星 : {color:0xffeccc, thick:0.028, power:2.8, strength:0.62, opacity:0.64, forward:0.38},
+  天王星: {color:0x9fe4e8, thick:0.026, power:2.8, strength:0.55, opacity:0.58, forward:0.32},  // 甲烷霾，雾霾厚但散射弱
+  /* 海王星大气壳色必须与本体同调（深蓝），不能用浅蓝 0x7aa8ff ——
+     浅色边缘散射会往深蓝本体上叠白，把「海王星比天王星深」这个
+     真实身份特征洗掉。散射强度也调低：冰巨星大气稀薄。*/
+  海王星: {color:0x4a72d8, thick:0.028, power:2.8, strength:0.60, opacity:0.62, forward:0.34},
+};
+
+/** 大气壳：Fresnel 边缘散射 + 前向散射（近日时的「光晕」）。
+ *  只在边缘增强，正面几乎透明 —— 这是真实大气的行为。
+ *  forward 项模拟太阳在行星背后时的大气前向散射（日食时的亮弧），
+ *  这是让大气层「看起来真实」的关键：没有它就只是一圈死板的描边。 */
+function atmosphereMesh(cfg){
+  const geo = new THREE.SphereGeometry(1, 64, 48);
+  const mat = new THREE.ShaderMaterial({
+    uniforms:{
+      uColor:{value:new THREE.Color(cfg.color)},
+      uPower:{value:cfg.power},
+      uStrength:{value:cfg.strength},
+      uOpacity:{value:cfg.opacity},
+      uForward:{value:cfg.forward == null ? 0.4 : cfg.forward},
+      uSunDir:{value:new THREE.Vector3(1,0,0)}   // 指向太阳（世界系，由每帧更新）
+    },
+    vertexShader:`
+      varying vec3 vN; varying vec3 vW; varying vec3 vV;
+      void main(){
+        vN = normalize(mat3(modelMatrix) * normal);
+        vec4 wp = modelMatrix * vec4(position,1.0);
+        vW = wp.xyz;
+        vV = normalize(cameraPosition - wp.xyz);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader:`
+      uniform vec3 uColor; uniform float uPower,uStrength,uOpacity,uForward;
+      uniform vec3 uSunDir;
+      varying vec3 vN; varying vec3 vW; varying vec3 vV;
+      void main(){
+        vec3 N = normalize(vN);
+        vec3 V = normalize(vV);
+        vec3 L = normalize(uSunDir);
+        float ndv = clamp(dot(N, V), 0.0, 1.0);
+        // Fresnel：正对视线时=0（不散射），掠射时→1（大气层最厚）
+        float fres = pow(1.0 - ndv, uPower);
+        // 只有被照亮的一侧才有散射（真实：夜面大气不发光）
+        float lit = clamp(dot(N, L), -1.0, 1.0);
+        lit = smoothstep(-0.30, 0.40, lit);
+        // 前向散射：视线方向与太阳方向接近时，大气最亮（真实的「迎日而亮」）
+        float fwd = pow(clamp(dot(V, -L)*0.5+0.5, 0.0, 1.0), 3.0);
+        // 边缘还要求视线掠射才明显
+        float a = fres * uStrength * (0.22 + 0.78*lit + 0.55*uForward*fwd) * uOpacity;
+        gl_FragColor = vec4(uColor * a, a);
+      }`,
+    transparent:true, side:THREE.BackSide,
+    blending:THREE.AdditiveBlending, depthWrite:false
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.renderOrder = 2;
+  return m;
+}
+
+/** 给材质挂上反照率标定增益：在 shader 里把 diffuseColor 乘上 gain。
+ *  放在着色器而不是改 8 位像素，是为了让超出 [0,1] 的部分由 ACES 色调
+ *  映射滚降（真实相机传感器过曝时也是这么做的）。若在 canvas 阶段
+ *  截断，深蓝通道一削色度就没了 —— 海王星会被洗成淡蓝。
+ *  chainPrev 用于叠加已有的 onBeforeCompile（如地球的夜面遮罩）。 */
+function applyAlbedoGain(mat, gain, chainPrev){
+  if(!gain || Math.abs(gain-1) < 1e-3) return mat;
+  mat.userData.uAlbedoGain = {value: gain};
+  mat.onBeforeCompile = sh=>{
+    if(chainPrev) chainPrev(sh);
+    sh.uniforms.uAlbedoGain = mat.userData.uAlbedoGain;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uAlbedoGain;')
+      .replace('#include <map_fragment>',
+               '#include <map_fragment>\ndiffuseColor.rgb *= uAlbedoGain;');
+  };
+  mat.needsUpdate = true;
+  return mat;
+}
+
+const bodies = [];
+function makeBody(def, isSun){
+  const g = new THREE.Group();
+  const ph = PHYS[def.n] || PHYS['地球'];
+  const tex = TEX[KINDTEX[def.n]];
+  // 太阳已在前面用 limbDarkened 材质单独建好网格，这里只建一个占位体供
+  // 位置/自转/标签复用（贴图与材质都不再由此处决定）
+  if(isSun){
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 48),
+      new THREE.MeshBasicMaterial({color:0xffffff}));
+    mesh.visible = false;                    // 视觉由 sunMesh 负责
+    g.add(mesh);
+    const grp = new THREE.Group(); grp.add(g);
+    const axis = new THREE.Group(); axis.add(g); grp.add(axis);
+    scene.add(grp);
+    const b = { def, isSun, grp, axis, mesh, clouds:null, atmo:null, mat:mesh.material,
+                rings:null, label:null, pos:new THREE.Vector3() };
+    bodies.push(b);
+    return b;
+  }
+  const matOpts = {
+    map: tex.map,
+    roughness: ph.rough,
+    metalness: ph.metal
+  };
+  if(tex.normal){ matOpts.normalMap = tex.normal; matOpts.normalScale = new THREE.Vector2(ph.bump, ph.bump); }
+
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 48), new THREE.MeshStandardMaterial(matOpts));
+  g.add(mesh);
+
+  // 地球：海洋镜面（低粗糙度）+ 夜面城市灯光
+  if(def.n === '地球'){
+    mesh.material.roughness = 0.42;               // 海洋占 71% → 略镜面（真实海面粗糙度 0.35~0.45）
+    mesh.material.emissiveMap = TEX.earthNight;
+    mesh.material.emissive = new THREE.Color(0xffcc88);
+    mesh.material.emissiveIntensity = 1.0;
+    /* 城市灯光只在夜面可见。emissive 在 Three.js 里是无条件叠加的
+       （不受 N·L 影响），直接设 emissiveMap 会让向阳面也冒出橙点。
+       这里注入 shader：按 N·L 把 emissive 在晨昏线附近平滑压掉。*/
+    const matE = mesh.material;
+    matE.userData.uSunDirW = {value: new THREE.Vector3(1,0,0)};
+    const nightMask = sh=>{
+      sh.uniforms.uNightSun = matE.userData.uSunDirW;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWNrm;')
+        .replace('#include <defaultnormal_vertex>',
+                 '#include <defaultnormal_vertex>\nvWNrm = normalize(mat3(modelMatrix)*normal);');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec3 uNightSun;\nvarying vec3 vWNrm;')
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+          float ndl = dot(normalize(vWNrm), normalize(uNightSun));
+          totalEmissiveRadiance *= smoothstep(0.12, -0.22, ndl);`);
+    };
+    // 增益注入要链在夜面遮罩之后，否则会覆盖掉 onBeforeCompile
+    applyAlbedoGain(matE, tex.gain, nightMask);
+  } else {
+    /* 地球已经由上面的链式版本处理过了，这里必须跳过。
+       applyAlbedoGain 是直接赋值 mat.onBeforeCompile —— 对地球再调一次
+       （chainPrev 为 undefined）会把链着 nightMask 的版本整个替换掉，
+       夜面遮罩随之消失，昼面就会冒出城市灯光。 */
+    applyAlbedoGain(mesh.material, tex.gain);
+  }
+  // 冰巨星：甲烷冰云有轻微光泽，不是纯漫反射
+  if(def.n === '天王星' || def.n === '海王星'){
+    mesh.material.roughness = 0.55;
+    mesh.material.metalness = 0.05;
+  }
+
+  // 地球云层：独立球壳，自转略快于地表（真实：赤道风超地表自转）
+  let clouds = null;
+  if(def.n === '地球'){
+    /* opacity 必须压低：云层是**贴在球外 1.012 倍**的一层，0.88 时它几乎
+       完全盖住地表，刚画好的真实大陆轮廓（地球仪）全被糊成白斑 ——
+       「按地球仪绘制」就白做了。0.55 只留薄薄一层，仍有云感但看得见陆地。 */
+    clouds = new THREE.Mesh(new THREE.SphereGeometry(1.012, 64, 48),
+      new THREE.MeshStandardMaterial({map:TEX.earthClouds, transparent:true,
+        opacity:0.55, roughness:0.95, metalness:0, depthWrite:false}));
+    clouds.renderOrder = 1;
+    g.add(clouds);
+  }
+
+  // 大气壳
+  let atmo = null;
+  if(ATMOS[def.n]){
+    atmo = atmosphereMesh(ATMOS[def.n]);
+    atmo.scale.setScalar(1 + ATMOS[def.n].thick);
+    g.add(atmo);
+  }
+
+  const grp = new THREE.Group();
+  grp.add(g);
+  // 转轴倾角：先绕 X 转倾角（相对黄道），再自转
+  const axis = new THREE.Group();
+  axis.rotation.x = def.tilt*D2R;
+  axis.add(g);
+  grp.add(axis);
+  scene.add(grp);
+  const b = { def, isSun, grp, axis, mesh, clouds, atmo, mat:mesh.material,
+              rings:null, label:null, pos:new THREE.Vector3() };
+  bodies.push(b);
+  return b;
+}
+const sunBody = makeBody(SUN, true);
+const planetBodies = PLANETS.map(p=>makeBody(p, false));
+
+/* 月球 */
+const moonBody = (()=>{
+  const def = {n:'月球', c:0xb8b2a8, cls:'moon', r:MOON_R, rot:27.3217, tilt:6.68,
+               note:'每年远离地球 3.8 cm · 26 万年回归原位'};
+  const g = new THREE.Group();
+  const mMat = new THREE.MeshStandardMaterial({
+    map: TEX.moon.map,
+    normalMap: TEX.moon.normal,
+    normalScale: new THREE.Vector2(PHYS['月球'].bump, PHYS['月球'].bump),
+    roughness: PHYS['月球'].rough, metalness: 0
+  });
+  applyAlbedoGain(mMat, TEX.moon.gain);
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(1,48,32), mMat));
+  const grp = new THREE.Group(); grp.add(g); scene.add(grp);
+  const b = {def, isMoon:true, grp, axis:g, mesh:g.children[0], mat:mMat,
+             clouds:null, atmo:null, rings:null, label:null, pos:new THREE.Vector3()};
+  bodies.push(b);
+  return b;
+})();
+
+/* ---------- 土星环 ----------
+   真实结构（以土星半径为单位）：
+     D 环   1.11–1.24  极暗，几乎透明
+     C 环   1.24–1.52  半透明，暗而细
+     B 环   1.52–1.95  **最亮最厚**，水冰，反照率可达 0.6+
+     卡西尼环缝 1.95–2.02  几乎真空（由 2:1 共振清空）
+     A 环   2.02–2.27  中等亮度
+     恩克环缝  2.214     著名的窄缝
+     F 环   2.32        细窄的行星环物质
+   环由 **水冰颗粒**组成，反照率高且半透明 —— 这是它看起来发亮发白的原因。 */
+const RING = {D:[1.11,1.24,0.06], C:[1.24,1.52,0.34], B:[1.52,1.95,0.95],
+              cassini:[1.95,2.02,0.02], A:[2.02,2.27,0.62], f:[2.32,2.34,0.18]};
+(function saturnRings(){
+  const b = planetBodies.find(x=>x.def.n==='土星');
+  const IW = 2048;
+  const tex = cvTexture(IW, 8, (g,W,H)=>{
+    g.clearRect(0,0,W,H);
+    const at = (ri)=>{                            // 半径 → 贴图 x
+      return (ri-RING.D[0])/(RING.f[1]-RING.D[0])*W;
+    };
+    // 逐环带绘制，密度（不透明度）按真实反照率
+    const band=(r0,r1,dens,col1,col2)=>{
+      const x0=at(r0), x1=at(r1);
+      const grd=g.createLinearGradient(x0,0,x1,0);
+      grd.addColorStop(0,   `rgba(${col1},${dens*0.75})`);
+      grd.addColorStop(0.25,`rgba(${col2},${dens})`);
+      grd.addColorStop(0.75,`rgba(${col2},${dens})`);
+      grd.addColorStop(1,   `rgba(${col1},${dens*0.75})`);
+      g.fillStyle=grd; g.fillRect(x0,0,x1-x0,H);
+    };
+    band(RING.D[0],RING.D[1], RING.D[2], '150,138,120','186,172,150');  // D 环极暗
+    band(RING.C[0],RING.C[1], RING.C[2], '168,150,124','206,188,156');  // C 环
+    band(RING.B[0],RING.B[1], RING.B[2], '232,220,196','248,242,226');  // B 环最亮
+    band(RING.cassini[0],RING.cassini[1],RING.cassini[2],'40,36,30','60,54,44'); // 卡西尼缝
+    band(RING.A[0],RING.A[1], RING.A[2], '212,198,172','234,222,198');  // A 环
+    band(RING.f[0],RING.f[1],  RING.f[2], '226,214,190','244,236,216');  // F 环
+    // 恩克环缝（A 环内，2.214 R）
+    const encke=at(2.214), enW=at(2.222)-at(2.208);
+    g.fillStyle='rgba(0,0,0,0.9)'; g.fillRect(encke-enW/2,0,enW,H);
+    // 环内密度波动：真实环有数千条细缝（由土卫共振造成）
+    for(let i=0;i<2600;i++){
+      const x=at(RING.D[0])+rnd()*(at(RING.f[1])-at(RING.D[0]));
+      const isB = x>at(1.52)&&x<at(1.95);
+      g.fillStyle='rgba(0,0,0,'+(rnd()*(isB?0.55:0.32))+')';
+      g.fillRect(x,0,1+rnd()*(isB?5:2.5),H);
+    }
+    // 亮条纹（B 环内的密度波）
+    for(let i=0;i<160;i++){
+      const x=at(1.55)+rnd()*(at(1.93)-at(1.55));
+      g.fillStyle='rgba(255,252,244,'+(0.06+rnd()*0.22)+')';
+      g.fillRect(x,0,1+rnd()*4,H);
+    }
+  });
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  const inner = RING.D[0], outer = RING.f[1];
+
+  /* 自建环几何，不能用 RingGeometry。
+     RingGeometry 的 uv 是 uv.x=(x/outer+1)/2、uv.y=(y/outer+1)/2 —— 沿周向
+     uv.x 随 cosθ 周期变化，会把上面画的「径向细缝」扫成 256 条辐射条纹。
+     这里显式约定：u = 归一化半径（环带结构走这个方向），v = θ/2π。 */
+  const TSEG = 512, RSEG = 8;
+  const g2 = new THREE.BufferGeometry();
+  const vtx = [], uvs = [], idx = [];
+  for(let ri=0; ri<=RSEG; ri++){
+    const rr = inner + (outer-inner)*ri/RSEG;
+    for(let ti=0; ti<=TSEG; ti++){
+      const th = ti/TSEG*PI*2;
+      vtx.push(rr*Math.cos(th), rr*Math.sin(th), 0);
+      uvs.push((rr-inner)/(outer-inner), ti/TSEG);
+    }
+  }
+  const row = TSEG+1;
+  for(let ri=0; ri<RSEG; ri++)for(let ti=0; ti<TSEG; ti++){
+    const a = ri*row+ti, bb = a+1, c = a+row, d = c+1;
+    idx.push(a,c,bb,  bb,c,d);
+  }
+  g2.setAttribute('position', new THREE.Float32BufferAttribute(vtx,3));
+  g2.setAttribute('uv',       new THREE.Float32BufferAttribute(uvs,2));
+  g2.setIndex(idx);
+  g2.computeVertexNormals();
+
+  /* 材质：贴图 + **土星本影投在环上的暗带**。
+     真实里环最显著的辨识特征之一就是行星影子横切环面 ——
+     只有当环处于太阳的背阳半侧时才会出现，是一条笔直的暗带，
+     宽度≈行星半径。做法：环面片元的世界坐标投影到「垂直于日方向的
+     平面」，若投影半径 < 行星半径且该点在背光侧 → 乘以阴影系数。
+     用 uSunDir（世界系，每帧从天体位置更新）即可，不依赖阴影贴图。 */
+  const ringMat = new THREE.ShaderMaterial({
+    uniforms:{
+      map:{value:tex},
+      uSunDir:{value:new THREE.Vector3(1,0,0)},   // 背离太阳方向（世界系）
+      uCenter:{value:new THREE.Vector3()},         // 土星世界坐标
+      uPlanetR:{value:1},
+      uShadow:{value:0.30},          // 影内亮度（0.30 ≈ 只剩环内散射与反照）
+      uOpacity:{value:0.96}
+    },
+    vertexShader:`
+      varying vec2 vUv; varying vec3 vW;
+      void main(){
+        vUv = uv;
+        vec4 wp = modelMatrix * vec4(position,1.0);
+        vW = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader:`
+      uniform sampler2D map; uniform vec3 uSunDir, uCenter;
+      uniform float uPlanetR, uShadow, uOpacity;
+      varying vec2 vUv; varying vec3 vW;
+      void main(){
+        vec4 t = texture2D(map, vUv);
+        if(t.a < 0.01) discard;
+        /* 把片元相对土星中心的位置投到「垂直日方向的平面」，取到日轴的距离 d。
+           若片元位于背阳侧（s>0）且 d < 行星半径 → 落在圆柱阴影内。
+           必须减掉 uCenter：土星在 950 单位外，不减的话整条环带都会被判进阴影。 */
+        vec3 rel = vW - uCenter;
+        float s = dot(rel, uSunDir);
+        float d = length(rel - uSunDir*s);
+        float inShadow = step(0.0, s) * (1.0 - step(uPlanetR, d));
+        float k = mix(1.0, uShadow, inShadow);
+        gl_FragColor = vec4(t.rgb*k, t.a*uOpacity);
+      }`,
+    side:THREE.DoubleSide, transparent:true, depthWrite:false
+  });
+  const mesh = new THREE.Mesh(g2, ringMat);
+  mesh.rotation.x = -PI/2;
+  b.mesh.add(mesh);
+  b.rings = mesh;
+  b.ringTex = tex;
+  b.ringMat = ringMat;
+})();
+
+/* ---------- 天王星 / 海王星的窄环 ----------
+   两颗冰巨星都有环，但极窄极暗（天王星 9 条主环，海王星 5 条弧段），
+   是旅行者 2 号用长曝光才拍到的。用极低不透明度 + 冷色调表达，
+   同时保留「天王星环近乎垂直（自转轴倾角 98°）」这个一眼可辨的特征。 */
+function thinRings(planetName, bands, color, baseOpacity, tiltWithAxis){
+  const b = planetBodies.find(x=>x.def.n===planetName);
+  if(!b) return;
+  const IW = 1024;
+  const tex = cvTexture(IW, 8, (g,W,H)=>{
+    g.clearRect(0,0,W,H);
+    const lo=bands[0][0], hi=bands[bands.length-1][1];
+    const at=ri=>(ri-lo)/(hi-lo)*W;
+    bands.forEach(([r0,r1,dens])=>{
+      const x0=at(r0), x1=at(r1);
+      const grd=g.createLinearGradient(x0,0,x1,0);
+      grd.addColorStop(0,   `rgba(${color},${dens*0.6})`);
+      grd.addColorStop(0.5, `rgba(${color},${dens})`);
+      grd.addColorStop(1,   `rgba(${color},${dens*0.6})`);
+      g.fillStyle=grd; g.fillRect(x0,0,Math.max(1,x1-x0),H);
+    });
+  });
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  const inner=bands[0][0], outer=bands[bands.length-1][1];
+  const TSEG=256, RSEG=1;
+  const g2=new THREE.BufferGeometry();
+  const vtx=[],uvs=[],idx=[];
+  for(let ri=0;ri<=RSEG;ri++){
+    const rr=inner+(outer-inner)*ri/RSEG;
+    for(let ti=0;ti<=TSEG;ti++){
+      const th=ti/TSEG*PI*2;
+      vtx.push(rr*Math.cos(th), rr*Math.sin(th), 0);
+      uvs.push((rr-inner)/(outer-inner), ti/TSEG);
+    }
+  }
+  const row=TSEG+1;
+  for(let ri=0;ri<RSEG;ri++)for(let ti=0;ti<TSEG;ti++){
+    const a=ri*row+ti,bb=a+1,c=a+row,d=c+1; idx.push(a,c,bb, bb,c,d);
+  }
+  g2.setAttribute('position',new THREE.Float32BufferAttribute(vtx,3));
+  g2.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
+  g2.setIndex(idx);
+  const m=new THREE.Mesh(g2, new THREE.MeshBasicMaterial({
+    map:tex, side:THREE.DoubleSide, transparent:true,
+    depthWrite:false, opacity:baseOpacity}));
+  m.rotation.x=-PI/2;
+  b.mesh.add(m);
+  b.rings=m; b.ringTex=tex;
+}
+// 天王星：ε 环最外（2.00R），中间 6 条在 1.64~1.95R
+// 窄环在 1024px 贴图上每条只有 ~28px 宽，opacity 若低于 0.5 几乎看不见 ——
+// 实测 0.34 时截图里只剩几条极淡的灰线，等于白加。
+thinRings('天王星',
+  [[1.64,1.66,0.52],[1.70,1.72,0.44],[1.75,1.77,0.60],[1.79,1.81,0.40],
+   [1.84,1.86,0.52],[1.90,1.92,0.48],[1.95,1.97,0.62],[1.99,2.01,0.92]],
+  '168,208,214', 0.68);
+// 海王星：加勒环 1.69R + 亚当斯环 2.54R，中间环隙很大
+thinRings('海王星',
+  [[1.69,1.71,0.42],[1.94,1.96,0.34],[2.12,2.14,0.30],[2.53,2.56,0.66]],
+  '136,172,228', 0.58);
+
+/* ---------- 行星卫星系统 ----------
+   真实数据（NASA Planetary Fact Sheet，轨道半径单位 = 母星半径，
+   公转周期单位 = 天，颜色取各卫星反照率特征）：
+     火星: 火卫一 Phobos(2.77R, 0.319d) / 火卫二 Deimos(6.92R, 1.263d)
+     木星: 伽利略卫星 —— 木卫一(5.90R) 木卫二(9.40R)
+           木卫三(14.97R) 木卫四(26.33R)
+     土星: 土卫六 Titan(20.29R) / 土卫二 Enceladus(3.97R)
+           土卫一 Mimas(3.08R) / 土卫八 Iapetus(59.0R)
+     天王星: 天卫三 Titania(9.76R) / 天卫四 Oberon(16.64R) / 天卫五 Miranda(5.08R)
+     海王星: 海卫一 Triton(14.39R, **逆行**公转)
+   卫星轨道必须**跟着母星转**（挂到 b.grp 下而非 b.axis 下），
+   且轨道平面垂直于母星自转轴 —— 所以挂在 axis 里会跟着自转甩飞。
+   做法：每个卫星建一个 orbit holder，rotation.x = 母星倾角，
+   挂在 b.grp（不自转的那个组）下，卫星本体自转独立处理。 */
+const MOONS = {
+  '火星':[[2.77,'火卫一',0.0],[6.92,'火卫二',0.0]],
+  '木星':[[5.90,'木卫一',0.02],[9.40,'木卫二',0.05],[14.97,'木卫三',0.10],[26.33,'木卫四',0.16]],
+  '土星':[[3.08,'土卫一',0.05],[3.97,'土卫二',0.10],[4.94,'土卫三',0.08],
+          [6.65,'土卫四',0.12],[20.29,'土卫五',0.20],[59.0,'土卫八',0.24]],
+  '天王星':[[5.08,'天卫五',0.05],[9.76,'天卫三',0.10],[16.64,'天卫四',0.14]],
+  '海王星':[[14.39,'海卫一',0.14]],      // 逆行，见 retro 标记
+};
+/* 卫星显示半径：真实比例（如木卫三/木星 = 0.22）在压缩过的场景里
+   会小到看不见，所以统一按「母星半径 × 显示系数」给，
+   系数 0.14~0.30 保证可辨识又不喧宾夺主。 */
+const MOON_LOOK = {
+  火卫一:{c:0x8a7f72,s:0.055}, 火卫二:{c:0x9a8f80,s:0.045},
+  木卫一:{c:0xe8d98a,s:0.20},  木卫二:{c:0xd8cfc0,s:0.18},
+  木卫三:{c:0xa89a8a,s:0.26},  木卫四:{c:0x7a6f62,s:0.24},
+  土卫一:{c:0xc8c2b8,s:0.10},  土卫二:{c:0xf2f6f8,s:0.12},
+  土卫三:{c:0xd6cfc2,s:0.16},  土卫四:{c:0xcfc7b8,s:0.18},
+  土卫五:{c:0xd8a85a,s:0.22},  土卫八:{c:0x9a8e80,s:0.16},
+  天卫五:{c:0xb4bcc0,s:0.10},  天卫三:{c:0xa8b0b4,s:0.16}, 天卫四:{c:0x9aa2a6,s:0.15},
+  海卫一:{c:0xd8dce0,s:0.19},
+};
+const moonSystems = [];
+(function buildMoons(){
+  for(const pname in MOONS){
+    const b = planetBodies.find(x=>x.def.n===pname);
+    if(!b) continue;
+    const holder = new THREE.Group();
+    holder.rotation.x = b.def.tilt*D2R;      // 轨道面垂直母星自转轴
+    b.grp.add(holder);
+    const moons = MOONS[pname].map(([R,name,rr])=>{
+      const look = MOON_LOOK[name] || {c:0xbbbbbb, s:0.12};
+      const geo = new THREE.SphereGeometry(1, 24, 16);
+      const mat = new THREE.MeshStandardMaterial({
+        color: look.c, roughness: 0.94, metalness: 0});
+      const mesh = new THREE.Mesh(geo, mat);
+      const orbit = new THREE.Group();      // 轨道倾角/升交点经度
+      orbit.rotation.x = rr*D2R;
+      orbit.add(mesh);
+      holder.add(orbit);
+      return {name, R, mesh, orbit, look,
+              phase: rnd()*PI*2,           // 初始相位
+              retro: name==='海卫一'};      // 海卫一是逆行公转
+    });
+    b.moons = moons;
+    moonSystems.push({parent:b, holder, moons});
+  }
+})();
+/** 每帧推进卫星：轨道角速度 ω = 2π/ (km_real_ratio × ...)，直接用
+ *  「公转周期（天）→ 显示角速度」的经验映射：木卫一 1.77天 跑得快，
+ *  土卫八 79 天跑得慢。速率按真实周期反比归一（以 3 天为基准）。 */
+const MOON_DAY = {火卫一:0.319,火卫二:1.263,木卫一:1.769,木卫二:3.551,木卫三:7.155,
+  木卫四:16.689,土卫一:0.942,土卫二:1.370,土卫三:1.888,土卫四:2.737,土卫五:15.945,
+  土卫八:79.32,天卫五:1.413,天卫三:3.931,天卫四:6.387,海卫一:5.877};
+function updateMoons(dtDays){
+  for(const sys of moonSystems){
+    const pr = bodyRadius(sys.parent.def.r);
+    for(const m of sys.moons){
+      // 显示轨道半径 = 母星半径 × R(R 倍)，下限保证不被母星本体吞掉
+      const orbitR = Math.max(pr*m.R, pr*1.9);
+      const per = MOON_DAY[m.name] || 3;
+      // 基准：3 天公转一圈 → ω = 2π/3 (rad/天)，按真实周期反比缩放
+      const w = m.retro ? -1 : 1;
+      m.phase += w * (2*PI/3) / per * dtDays;
+      const mesh = m.mesh;
+      mesh.position.set(Math.cos(m.phase)*orbitR, 0, Math.sin(m.phase)*orbitR);
+      // 卫星本体自转（同步自转 Tidally locked：自转周期 = 公转周期）
+      mesh.rotation.y = m.phase;
+      mesh.scale.setScalar(Math.max(pr*m.look.s, pr*0.035));
+    }
+  }
+}
+
+/* ---------- 轨道线 ---------- */
+const orbitGroup = new THREE.Group(); scene.add(orbitGroup);
+function buildOrbit(planet){
+  const g = new THREE.BufferGeometry();
+  const SEG = 720, pos = new Float32Array((SEG+1)*3);
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const line = new THREE.Line(g, new THREE.LineBasicMaterial({
+    color: planet.c, transparent:true, opacity:0.34 }));
+  line.frustumCulled = false;
+  orbitGroup.add(line);
+  return {line, pos, SEG};
+}
+const orbits = planetBodies.map(p=>buildOrbit(p.def));
+// 月球轨道：由真实月轨反推（用 30 天采样）
+const moonOrbit = (()=>{
+  const g = new THREE.BufferGeometry();
+  const SEG=540, pos=new Float32Array((SEG+1)*3);
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const line=new THREE.Line(g,new THREE.LineBasicMaterial({
+    color:0xcccccc, transparent:true, opacity:0.42}));
+  line.frustumCulled=false; orbitGroup.add(line);
+  return {line,pos,SEG};
+})();
+function updateMoonOrbitPath(jd){
+  const {pos,SEG} = moonOrbit;
+  const T = 27.32;
+  for(let i=0;i<=SEG;i++){
+    const t = jd + (i/SEG)*T - T*0.5;
+    const m = moonGeo(t);
+    const k = mapMoon(m.dist);
+    pos[i*3]   = m.x/m.dist*k;
+    pos[i*3+1] = m.z/m.dist*k;
+    pos[i*3+2] = -m.y/m.dist*k;
+  }
+  moonOrbit.line.geometry.attributes.position.needsUpdate = true;
+  moonOrbit.line.geometry.computeBoundingSphere();
+}
+
+/* ---------- 网格 (AU 圆) ---------- */
+const gridGroup = new THREE.Group(); scene.add(gridGroup);
+/* 用函数声明而非命名函数表达式：命名函数表达式（`(function buildGrid(){});`）
+   的名字只在函数自身作用域内可见，外部拿不到。setDistMode() 切换距离模式时
+   需要清空网格后重建，会调用 buildGrid() —— 若用命名函数表达式会抛
+   `buildGrid is not defined`，且因为 setDistMode 是「先清空网格、再重建、
+   后重新取景」的顺序，异常一抛就导致**网格永久消失**、distMode 与实际
+   渲染半径脱节。 */
+function buildGrid(){
+  const radii = [0.39,0.72,1,1.52,5.2,9.54,19.19,30.07,39.48];
+  radii.forEach(au=>{
+    const R = mapAU(au), SEG=256, p=new Float32Array((SEG+1)*3);
+    for(let i=0;i<=SEG;i++){ const a=i/SEG*PI*2; p[i*3]=R*Math.cos(a); p[i*3+1]=0; p[i*3+2]=R*Math.sin(a); }
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(p,3));
+    const l=new THREE.Line(g,new THREE.LineDashedMaterial({
+      color:0x3a5a86, transparent:true, opacity:0.5, dashSize:R*0.05, gapSize:R*0.028}));
+    l.computeLineDistances();
+    gridGroup.add(l);
+  });
+  // 黄道面
+  const R = mapAU(42), N=1, p=new Float32Array([ -R,0,0, R,0,0, 0,0,-R, 0,0,R ]);
+  const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p,3));
+  gridGroup.add(new THREE.LineSegments(g,new THREE.LineBasicMaterial({
+    color:0x6f8fb8, transparent:true, opacity:0.32})));
+}
+buildGrid();
+
+/* ---------- 星空 ---------- */
+const starGroup = new THREE.Group(); scene.add(starGroup);
+(function buildStars(){
+  const N=5200, pos=new Float32Array(N*3), col=new Float32Array(N*3), sz=new Float32Array(N);
+  const tint=[[1,1,1],[0.75,0.85,1],[1,0.9,0.75],[1,0.75,0.6],[0.85,1,0.95]];
+  for(let i=0;i<N;i++){
+    let x,y,z,l;
+    do{ x=Math.random()*2-1; y=Math.random()*2-1; z=Math.random()*2-1; l=Math.hypot(x,y,z); }
+    while(l>1||l<0.001);
+    const R=260000;
+    pos[i*3]=x/l*R; pos[i*3+1]=y/l*R; pos[i*3+2]=z/l*R;
+    const c=tint[Math.floor(Math.random()*tint.length)];
+    const b=0.28+Math.pow(Math.random(),3)*0.95;
+    col[i*3]=c[0]*b; col[i*3+1]=c[1]*b; col[i*3+2]=c[2]*b;
+    sz[i] = Math.random()<0.02 ? 4.6 : 1.1+Math.random()*1.9;
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  g.setAttribute('color',new THREE.BufferAttribute(col,3));
+  g.setAttribute('size',new THREE.BufferAttribute(sz,1));
+  const m=new THREE.PointsMaterial({size:2.4, vertexColors:true, sizeAttenuation:false,
+    transparent:true, opacity:0.92, depthWrite:false});
+  const pts=new THREE.Points(g,m);
+  pts.frustumCulled=false;
+  starGroup.add(pts);
+})();
+
+/* ---------- 标签 ---------- */
+const labelBox = document.getElementById('labels');
+bodies.forEach(b=>{
+  const d=document.createElement('div'); d.className='lab';
+  d.innerHTML = `<b>${b.def.n}</b>`;
+  labelBox.appendChild(d); b.label=d;
+  /* 悬浮提示不再用 3D 光圈。
+     光圈（billboard sprite）无论怎么调都容易被误读成大气层：
+       · AdditiveBlending + depthTest:false → 无视遮挡，永远罩在球前面
+       · 缩小到紧贴边缘后仍是一圈「彩色壳」，和真正的 ATMOS 大气壳
+         视觉上无法区分 —— 水星/月球/冥王星现实中根本没有大气。
+     现在改用「纯 UI 反馈」：天体标签本身高亮（updateLabels 里的 .hl）+
+     鼠标指针变化 + 右上角提示卡。选中态由一圈 2D 描边（CSS）承担，
+     明确是 UI 元素，不会被当成天体的物理属性。
+     大气层则由ATMOS 表里 7 颗行星的 Fresnel 大气壳独立表达（已加强）。 */
+});
+
+/* 悬浮提示卡 */
+const tip = document.createElement('div'); tip.id='tip';
+labelBox.appendChild(tip);
+
+/* ============================================================
+   状态
+   ============================================================ */
+let jd = dateToJD(new Date());
+let paused = false, dir = 1;
+let rate = 10;                              // 天/秒
+let selected = null, follow = false;
+const EARTH = bodies.find(b=>b.def.n==='地球');
+
+/* ---------- 速度滑块 → 对数速率 ---------- */
+const SR = {0:0.0005,250:1,500:10,750:120,1000:2000};
+function sliderToRate(v){
+  const k = v<=0?0:1, pts=[[0,0.0002],[120,0.02],[300,0.5],[500,10],[700,120],[850,900],[1000,5000]];
+  for(let i=0;i<pts.length-1;i++){
+    if(v>=pts[i][0] && v<=pts[i+1][0]){
+      const t=(v-pts[i][0])/(pts[i+1][0]-pts[i][0]);
+      return pts[i][1]*Math.pow(pts[i+1][1]/pts[i][1], t);
+    }
+  }
+  return 5000;
+}
+function fmtRate(r){
+  if(r<0.1) return (r*24).toFixed(2)+' 小时/秒';
+  if(r<1)   return (r*24).toFixed(1)+' 小时/秒';
+  if(r<50)  return r.toFixed(r<10?1:0)+' 天/秒';
+  if(r<400) return (r/30.4366).toFixed(1)+' 月/秒';
+  return (r/365.25).toFixed(2)+' 年/秒';
+}
+function setRate(v){
+  const s=document.getElementById('sSpeed');
+  const p=(v-s.min)/(s.max-s.min)*100; s.style.setProperty('--p', p+'%');
+  rate = sliderToRate(+v);
+  document.getElementById('vSpeed').textContent = fmtRate(rate);
+  document.getElementById('hRate').textContent = fmtRate(rate);
+}
+
+/* ============================================================
+   每帧更新
+   ============================================================ */
+const _v = new THREE.Vector3();
+const _atmoSun = new THREE.Vector3();   // 大气壳用的「指向太阳」方向，避免每帧 new
+/** 黄道直角坐标 (x,y,z) → three 坐标 (X, Z, -y)，黄道面为 XZ 平面 */
+function eclToThree(x, y, z, out){ out.set(x, z, -y); return out; }
+
+function bodyRadius(km){
+  const real = km/AU_KM*SCENE_SCALE;
+  if(trueSize) return real;
+  /* 真实半径极小（地球 0.0043 单位），用幂律压缩后再按sizeMul 缩放。
+     压缩指数 0.42 是为**行星**整体观感调的：地球 0.0043 → 2.39是可看的球。 */
+  /* 太阳不吃「星球大小」滑块：滑块语义是「行星直径」，恒星不该跟着缩。
+     原来太阳走同一条 pow(sizeMul,0.58) 通路，导致：
+       ① 调滑块时太阳辉光/日冕跟着一起变 —— 用户明确指出的问题；
+       ② 滑块拉满时太阳暴涨到盖住内行星轨道。
+     现在把太阳的 sizeMul 锁在 SUN_SIZE_REF（= 默认滑块位置 1500），
+     半径恒为 34.28，与滑块无关；辉光与日冕只跟这个恒定值走，永不跳变。 */
+  const mul = km > 1e5 ? SUN_SIZE_REF : sizeMul;
+  const r = Math.pow(real, 0.42) * Math.pow(mul, 0.58) * 0.34;
+  /* 太阳必须额外放大，否则看起来比地球还小。
+     为什么不能用「给太阳改压缩指数」的办法——试过，数学上不成立：
+     幂律压缩对所有天体同时生效，太阳 real=0.465 与地球 real=0.00426
+     相差 109倍，但压缩后只剩 7.2倍（109^0.42=7.2）。而且real<1 时
+     指数越大结果**反而越小**（0.465^0.62 < 0.465^0.42），
+     调大指数会让太阳更小——方向是反的。指数从 0.42 调到 0.18 也只能
+     把比值从 7.2 拉到 8.6，杯水车薪。幂函数压不出109倍的量级差。
+     所以改为给太阳一个**独立放大系数**（不改变任何其它天体的观感）：
+       ×2.0 → 太阳半径 34.3、太阳/地球 = 14.4×（真实 109×），太阳/木星 = 5.2×
+     上限约束：太阳半径必须明显小于水星轨道半径 39，否则全览视角下
+     会把内行星轨道整个吞掉。×2.0 时占 88%，是安全区；
+     ×2.5 会到 110%（越界），故取 2.0。 */
+  if(km > 1e5) return r * 2.0;      // 太阳
+  return r;
+}
+function update(dt){
+  if(!paused) jd += rate*dir*dt;
+
+  // 太阳
+  const sunR = bodyRadius(SUN.r);
+  sunBody.axis.scale.setScalar(sunR);
+  sunBody.pos.set(0,0,0);
+  sunBody.trueAU = 0;                 // 标签用：真实日心距离（AU），与显示映射无关
+  if(!paused) sunBody.axis.rotation.y = (jd*360/(SUN.rot||25.38))*D2R;
+  /* 辉光与日冕：尺寸只跟sunR 走，而 sunR 与「星球大小」滑块无关（见 bodyRadius），
+     所以调行星直径时这两者完全不响应。
+
+     辉光不能给太大：它是 AdditiveBlending 的 sprite，直径超过实体的
+     ~3 倍就会在画面中央糊成一大团棕色圆盘（加色叠加的结果），
+     把内行星轨道全盖住 —— 实测 150（4.4×直径）就是这个效果。
+     100 ≈ 2.9× 直径既能包住实体、又只在边缘留一圈光晕。 */
+  sunGlow.scale.setScalar(SUN_GLOW_BASE);
+  /* 日冕跟着实体走。RingGeometry 内径 1.0、外径 1.35，scale=S 时实际环半径
+     是 S~1.35S，环宽只有 0.35S 却用AdditiveBlending 叠加，在深空背景上
+     是一圈很明显的灰白色环带（偏心且盖住内行星轨道，很难看）。
+     日冕本该是紧贴球面的稀薄光晕，所以压到 1.25× 实体半径。
+     ⚠ 两者的尺寸都只依赖 sunR，而 sunR 现在与大小滑块无关（见 bodyRadius），
+       所以调行星直径时辉光/日冕**完全不响应** —— 这正是要修的行为。 */
+  corona.scale.setScalar(clamp(sunR*1.25, 12, 48));
+
+  // 行星
+  planetBodies.forEach((b,i)=>{
+    const st = planetState(PLANETS[i], jd);
+    b.trueAU = Math.hypot(st.x,st.y,st.z);   // 真实日心距（AU），标签/悬浮卡共用
+    const R = mapAU(Math.hypot(st.x,st.y,st.z));
+    eclToThree(st.x,st.y,st.z, b.pos);
+    const dirv = b.pos.clone().normalize();
+    b.grp.position.copy(dirv.multiplyScalar(R));
+    b.pos.copy(b.grp.position);
+    const rr = bodyRadius(PLANETS[i].r);
+    b.axis.scale.setScalar(rr);
+    if(!paused) b.axis.rotation.y = (jd*360/PLANETS[i].rot)*D2R;
+    // 地球云层独立自转：赤道风速使云系比地表快（真实 ~7% 差异）
+    if(b.clouds) b.clouds.rotation.y = (jd*360/0.99727*1.07)*D2R;
+    // 大气壳的太阳方向：天体指向太阳（世界系）。天体在太阳原点，故方向 = -位置
+    if(b.atmo && b.grp.position.lengthSq() > 1e-12){
+      _atmoSun.copy(b.grp.position).normalize().negate();
+      b.atmo.material.uniforms.uSunDir.value.copy(_atmoSun);
+      // 大气壳半径跟着天体缩放走（makeBody 里建的，scale 是相对 mesh 的）
+    }
+    // 土星环的行星投影阴影：需要「背离太阳」方向的世界向量
+    if(b.ringMat && b.grp.position.lengthSq() > 1e-12){
+      b.ringMat.uniforms.uSunDir.value.copy(b.grp.position).normalize();
+      b.ringMat.uniforms.uCenter.value.copy(b.grp.position);
+      b.ringMat.uniforms.uPlanetR.value = rr;   // 环是 mesh 的子节点，单位空间即行星半径
+    }
+    // 地球夜面灯光：shader 需要「指向太阳」的世界方向来判昼夜
+    if(b.mat && b.mat.userData.uSunDirW && b.grp.position.lengthSq() > 1e-12){
+      b.mat.userData.uSunDirW.value.copy(b.grp.position).normalize().negate();
+    }
+    // 轨道线
+    const o = orbits[i], el = st.el;
+    for(let k=0;k<=o.SEG;k++){
+      const E = k/o.SEG*PI*2;
+      const xp = el.a*(Math.cos(E)-el.e), yp = el.a*Math.sqrt(1-el.e*el.e)*Math.sin(E);
+      // 与 planetState 同一套旋转：ω = ϖ - Ω
+      const cw=Math.cos(el.w*D2R),sw=Math.sin(el.w*D2R);
+      const cO=Math.cos(el.Om*D2R),sO=Math.sin(el.Om*D2R);
+      const cI=Math.cos(el.I*D2R),sI=Math.sin(el.I*D2R);
+      const ex=(cw*cO-sw*sO*cI)*xp+(-sw*cO-cw*sO*cI)*yp;
+      const ey=(cw*sO+sw*cO*cI)*xp+(-sw*sO+cw*cO*cI)*yp;
+      const ez=(sw*sI)*xp+(cw*sI)*yp;
+      const rr2 = mapAU(Math.hypot(ex,ey,ez));
+      o.pos[k*3]=ex/Math.hypot(ex,ey,ez)*rr2;
+      o.pos[k*3+1]=ez/Math.hypot(ex,ey,ez)*rr2;
+      o.pos[k*3+2]=-ey/Math.hypot(ex,ey,ez)*rr2;
+    }
+    o.line.geometry.attributes.position.needsUpdate=true;
+    o.line.geometry.computeBoundingSphere();
+  });
+
+  // 月球：地球位置必须取「行星循环算好的场景坐标」b.pos，
+  // 它已经过 mapAU 映射（1 AU → 100 单位）。若直接用 planetState 的原始
+  // AU 坐标当锚点，月球会被放到离太阳 1 单位处 —— 看起来就是"月球在太阳边上"。
+  const earthPos = planetBodies[2].pos;
+  syncMoonBoost(earthPos.length());          // 依据当前地球日心距夹住月轨上限
+  const mg = moonGeo(jd);
+  moonBody.trueAU = mg.dist;                 // 月球真实地心距（AU），标签用实时值
+  const mR = mapMoon(mg.dist);
+  eclToThree(mg.x, mg.y, mg.z, _v);
+  const mpos = _v.clone().normalize().multiplyScalar(mR).add(earthPos);
+  moonBody.grp.position.copy(mpos);
+  moonBody.pos.copy(mpos);
+  const mr = bodyRadius(MOON_R);
+  moonBody.axis.scale.setScalar(mr);
+  if(!paused) moonBody.axis.rotation.y = (jd*360/27.3217)*D2R;
+  updateMoonOrbitPath(jd);
+  // 月球轨道线整体平移到地球处（几何是地心相对量，所以只加偏移）
+  moonOrbit.line.position.copy(earthPos);
+
+  // 行星卫星：跟随母星（挂在母星 grp 下，天然跟随位置与缩放）
+  updateMoons(paused ? 0 : rate*dir*dt);
+}
+
+/* ---------- 标签 + 悬浮提示 ---------- */
+// 用函数内局部向量，避免共享 v3 在嵌套调用时相互污染
+const _sp = new THREE.Vector3();
+let hovered = null;      // 当前悬浮的天体
+let showAllLabels = false;
+
+function bodyScreenPos(b){
+  _sp.copy(b.pos);
+  const camDist = camera.position.distanceTo(_sp);
+  _sp.project(camera);
+  return {
+    x: (_sp.x*0.5+0.5)*innerWidth,
+    y: (-_sp.y*0.5+0.5)*innerHeight,
+    front: _sp.z < 1,
+    inView: Math.abs(_sp.x) < 1.2 && Math.abs(_sp.y) < 1.2,
+    dist: camDist
+  };
+}
+
+function updateLabels(){
+  // 可见集合：常显全部，或悬浮/选中的那一个
+  const visSet = new Set();
+  if(showAllLabels) bodies.forEach(b=>visSet.add(b));
+  if(hovered) visSet.add(hovered);
+  if(selected) visSet.add(selected);
+
+  const placed = [];
+  bodies.forEach(b=>{
+    if(!visSet.has(b)){ b.label.style.opacity=0; b._sx=null; return; }
+    const s = bodyScreenPos(b);
+    if(!s.front || !s.inView){ b.label.style.opacity=0; b._sx=null; return; }
+    b._sx=s.x; b._sy=s.y; b._dist=s.dist;
+    placed.push(b);
+  });
+
+  // 近的优先占位，远的若重叠则上移让位
+  placed.sort((a,b)=>a._dist-b._dist);
+  placed.forEach(b=>{
+    let y=b._sy, tries=0;
+    while(tries<8 && placed.some(o=>o!==b && o._used &&
+      Math.abs(o._sx-b._sx)<46 && Math.abs(o._uy-y)<15)){ y-=15; tries++; }
+    b._uy=y; b._used=true;
+    b.label.style.opacity=1;
+    b.label.classList.toggle('hl', b===hovered);
+    b.label.style.left=b._sx.toFixed(1)+'px';
+    b.label.style.top =y.toFixed(1)+'px';
+    if(!b.isSun){
+      // 标签显示的是**真实日心距离（AU）**，与当前距离映射模式无关。
+      // 旧写法在对数模式下把场景显示半径当 AU（水星 1604、冥王星恰 3000"AU"），
+      // 是把显示坐标除错了基数；现在统一读 update() 里缓存的 b.trueAU。
+      const dAU = (b.trueAU != null) ? b.trueAU : b.grp.position.length()/SCENE_SCALE;
+      b.label.innerHTML = `<b>${b.def.n}</b><i>${dAU<0.01?dAU.toFixed(4):dAU.toFixed(2)} AU</i>`;
+    } else {
+      b.label.innerHTML = `<b>太阳</b>`;
+    }
+  });
+
+  // 悬浮提示卡
+  if(hovered){
+    const s = bodyScreenPos(hovered);
+    if(s.front && s.inView){
+      tip.style.opacity=1;
+      tip.style.left=s.x.toFixed(1)+'px';
+      tip.style.top =(s.y.toFixed(0)-14)+'px';
+      tip.innerHTML = tipHTML(hovered);
+    } else tip.style.opacity=0;
+  } else {
+    tip.style.opacity=0;
+  }
+}
+
+/** 轨道速度（km/s）：当前时刻数值微分（中心差分，h=0.02 天）。
+    悬浮卡与右侧信息面板共用同一实现，保证同一行星同一时刻两处数值一致。
+    旧悬浮卡用的是近日点速度公式 v = 29.7847·a^(-1/2)·sqrt((1+e)/(1−e))，
+    而同卡的日心距又是实时值 —— 一张卡内口径打架（水星 58.98 vs 面板 52.36）。 */
+function planetSpeedKms(pl){
+  const h = 0.02;
+  const s1 = planetState(pl, jd-h), s2 = planetState(pl, jd+h);
+  return Math.hypot(s2.x-s1.x, s2.y-s1.y, s2.z-s1.z)/(2*h)*AU_KM/86400;
+}
+
+/** 悬浮卡内容：即时算真实数据 */
+function tipHTML(b){
+  const d=b.def;
+  const rows=[];
+  if(b===sunBody){
+    rows.push(['直径','1,391,400 km']);
+    rows.push(['表面温度','5,500 ℃']);
+    rows.push(['占系统质量','99.86%']);
+  } else if(b===moonBody){
+    const m=moonGeo(jd);
+    rows.push(['地心距',(m.dist*AU_KM/1000).toFixed(0)+' 千 km']);
+    rows.push(['直径',(MOON_R*2).toLocaleString()+' km']);
+    rows.push(['绕地周期','27.32 天']);
+  } else {
+    const pl=PLANETS[planetBodies.indexOf(b)];
+    const st=planetState(pl,jd);
+    const h=Math.hypot(st.x,st.y,st.z);
+    const el=st.el;
+    // 轨道速度：与右侧信息面板同一实现（当前时刻数值微分），口径一致
+    const sp = planetSpeedKms(pl);
+    rows.push(['日心距',h.toFixed(3)+' AU']);
+    rows.push(['公转周期',Math.pow(el.a,1.5).toFixed(2)+' 年']);
+    rows.push(['轨道速度',sp.toFixed(2)+' km/s']);
+    rows.push(['直径',(d.r*2).toLocaleString()+' km']);
+  }
+  const hint = (b===selected && follow) ? '已聚焦跟随 · 按 R 重置退出' : '点击聚焦跟随';
+  return `<div class="tn">${d.n}</div><div class="tr">${d.note||''}</div>`+
+    rows.map(([k,val])=>`<span class="tk">${k}</span><span class="tv">${val}</span>`).join('<br>')+
+    `<div class="thint">${hint}</div>`;
+}
+
+/* ---------- 悬浮拾取（屏幕空间距离，比射线更宽容） ---------- */
+let mouseX=-1e4, mouseY=-1e4, mouseInside=false;
+const HALO_MIN = 13;      // 屏幕上至少 13px 命中半径
+function updateHover(){
+  if(!mouseInside){ setHover(null); return; }
+  let best=null, bestScore=Infinity;
+  bodies.forEach(b=>{
+    if(b===moonBody && !UI.moon.classList.contains('on')) return;
+    if(b===moonBody && !moonBody.grp.visible) return;
+    const s=bodyScreenPos(b);
+    if(!s.front || !s.inView) return;
+    // 天体在屏幕上的近似半径
+    const rWorld=bodyRadius(b.def.r);
+    const fovR = camera.fov*Math.PI/180;
+    const rPix = rWorld/(s.dist*Math.tan(fovR/2)*2) * innerHeight;
+    const hit = Math.max(rPix*1.6, HALO_MIN);
+    const dx=s.x-mouseX, dy=s.y-mouseY;
+    const d=Math.hypot(dx,dy);
+    if(d<=hit && d<bestScore){ best=b; bestScore=d; }
+  });
+  setHover(best);
+}
+function setHover(b){
+  if(hovered===b) return;
+  hovered=b;
+  if(camMode!=='fly') container.classList.toggle('hovering', !!b);
+}
+/* 悬浮高亮已完全交给 UI（标签 .hl + 指针 + 提示卡），这里不再有 3D 光圈。
+   大气层改由 ATMOS 表里 7 颗行星的 Fresnel 大气壳独立表达。
+   updateHalos 保留为空壳函数：主循环里还调它，但什么也不做，
+   这样主循环顺序断言和调用点都不用改（改动越小越不容易引入回归）。 */
+function updateHalos(){ /* 悬停光圈已移除 */ }
+
+/* ---------- 相机系统 ----------
+   帧率无关的指数平滑: f = 1 - exp(-rate · dt)
+   rate 越大越快。这样 30Hz 和 144Hz 下观感一致。            */
+const _camTgt = new THREE.Vector3();
+const _camDir = new THREE.Vector3();
+const _camTmp = new THREE.Vector3();
+const smooth = (rate, dt) => 1 - Math.exp(-rate*dt);
+
+// 相机状态机: 'idle' 自由 | 'fly' 飞行中 | 'follow' 跟随
+let camMode = 'idle';
+let flyT = 0, flyDur = 1.1;
+const flyFrom = { pos:new THREE.Vector3(), tgt:new THREE.Vector3() };
+const flyTo   = { pos:new THREE.Vector3(), tgt:new THREE.Vector3() };
+// 跟随时的目标距离（可被滚轮临时覆盖）
+let followDist = 0;
+
+function easeInOutCubic(t){
+  return t<0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2;
+}
+
+/** 启动一次相机飞行（平滑过渡到目标构图） */
+function flyToPose(toPos, toTgt, dur){
+  flyFrom.pos.copy(camera.position);
+  flyFrom.tgt.copy(controls.target);
+  flyTo.pos.copy(toPos);
+  flyTo.tgt.copy(toTgt);
+  flyDur = Math.max(0.25, dur);
+  flyT = 0;
+  camMode = 'fly';
+  controls.enabled = false;      // 飞行中锁定，避免手抖抢镜
+  container.style.cursor = 'default';
+}
+function endFly(){
+  controls.enabled = true;
+  container.classList.toggle('hovering', !!hovered);
+}
+
+/** 算出「看向某天体、保持当前视线方向、距离合适」的相机位姿 */
+function poseFor(b, distMul){
+  const r = bodyRadius(b.def.r);
+  const want = clampDist(r*distMul);
+  _camDir.copy(camera.position).sub(controls.target);
+  if(_camDir.lengthSq() < 1e-12) _camDir.set(0.42, 0.34, 0.84);
+  _camDir.normalize();
+  return { pos: b.pos.clone().addScaledVector(_camDir, want), tgt: b.pos.clone(), want };
+}
+
+function updateCamera(dt){
+  if(camMode === 'fly'){
+    flyT += dt;
+    const t = Math.min(1, flyT/flyDur);
+    const e = easeInOutCubic(t);
+    camera.position.lerpVectors(flyFrom.pos, flyTo.pos, e);
+    controls.target.lerpVectors(flyFrom.tgt, flyTo.tgt, e);
+    if(t >= 1){ camMode = follow && selected ? 'follow' : 'idle'; endFly(); }
+  }
+  else if(camMode === 'follow' && selected){
+    // 目标每帧在动，用指数平滑追；rate 调高保证行星快速公转时不掉队
+    const k = smooth(9, dt);
+    _camTgt.copy(selected.pos);
+    controls.target.lerp(_camTgt, k);
+    // 距离：zoomAuto 时跟随自动距离，否则听用户的
+    const r = bodyRadius(selected.def.r);
+    let want = zoomAuto ? (followDist || autoDistFor(selected)) : clampDist(zoomUser);
+    const d = camera.position.distanceTo(controls.target);
+    if(d < 1e-9){ _camDir.set(0.42,0.34,0.84).normalize();
+                  camera.position.copy(controls.target).addScaledVector(_camDir, want); }
+    else{
+      const nd = d + (want - d)*smooth(6, dt);
+      if(Math.abs(nd-d) > 1e-9){
+        _camDir.copy(camera.position).sub(controls.target).normalize();
+        camera.position.copy(controls.target).addScaledVector(_camDir, nd);
+      }
+    }
+  }
+  // 帧率无关阻尼：把 dampingFactor 当作每秒衰减比例
+  controls.dtScale = clamp(dt*60, 0.25, 3);
+  controls.update();
+}
+
+/* ---------- 面板让位：天体运行到面板正后方时，面板半透明并放行鼠标事件 ----------
+   面板是不透明的 DOM 层，行星划到其后方时该位置悬停/点击命中的都是面板。
+   每帧检查所有天体的屏幕位置：落在左/右面板矩形内 → 面板加 .ghost
+   （opacity .15 + pointer-events:none），悬浮与点选直达画布；划出后自动恢复。 */
+const _leftPanel = document.getElementById('left');
+const _rightPanel = document.getElementById('right');
+function updatePanelOcclusion(){
+  const rl = _leftPanel.getBoundingClientRect();
+  const rr = _rightPanel.getBoundingClientRect();
+  let hitL=false, hitR=false;
+  for(const b of bodies){
+    const s = bodyScreenPos(b);
+    if(!s.front || !s.inView) continue;
+    if(!hitL && s.x>rl.left && s.x<rl.right && s.y>rl.top && s.y<rl.bottom) hitL=true;
+    if(!hitR && s.x>rr.left && s.x<rr.right && s.y>rr.top && s.y<rr.bottom) hitR=true;
+    if(hitL && hitR) break;
+  }
+  _leftPanel.classList.toggle('ghost', hitL);
+  _rightPanel.classList.toggle('ghost', hitR);
+}
+
+/* ---------- 主循环 ---------- */
+let last = performance.now();
+function loop(now){
+  const dt = Math.min((now-last)/1000, 0.1); last = now;
+  update(dt);
+  updateCamera(dt);
+  syncZoomUI();
+  updateHover();
+  updateHalos();
+  updateLabels();
+  updatePanelOcclusion();
+  document.getElementById('hDate').textContent = jdStr(jd);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+/* ============================================================
+   UI
+   ============================================================ */
+const UI = {
+  orbit: document.getElementById('cOrbit'),
+  label: document.getElementById('cLabel'),
+  moon:  document.getElementById('cMoon'),
+  grid:  document.getElementById('cGrid'),
+  star:  document.getElementById('cStar'),
+  spin:  document.getElementById('cSpin'),
+};
+function bindCK(el, fn){
+  el.addEventListener('click', ()=>{ el.classList.toggle('on'); fn(el.classList.contains('on')); });
+}
+bindCK(UI.orbit, v=>{ orbitGroup.visible=v; gridGroup.visible=v && UI.grid.classList.contains('on'); });
+bindCK(UI.label, v=>{ showAllLabels=v; if(!v && hovered) setHover(null); });
+bindCK(UI.moon,  v=>{ moonBody.grp.visible=v; moonBody.mesh.visible=v;
+  moonOrbit.line.visible=v && orbitGroup.visible; });
+bindCK(UI.grid,  v=>{ gridGroup.visible=v && orbitGroup.visible; });
+bindCK(UI.star,  v=>{ starGroup.visible=v; });
+bindCK(UI.spin,  ()=>{});
+/* 「月球真实距离」和「真实星球大小」必须联动：
+   地球显示半径被夸大到 2.39 单位，而真实地月距只有 0.257 单位。
+   若只开月球真实距离而地球仍是夸大的，月球会直接埋进地球模型里。
+   所以开真实距离 → 强制同时开真实大小（并提示）；关真实大小 → 连带关真实距离。 */
+const ckTrue = document.getElementById('cTrueSize'), ckMoonReal = document.getElementById('cMoonReal');
+bindCK(ckTrue, v=>{
+  trueSize=v;
+  if(!v && moonReal){                      // 关掉真实大小 → 真实距离不再成立
+    moonReal=false; ckMoonReal.classList.remove('on');
+  }
+  refreshInfo();
+});
+bindCK(ckMoonReal, v=>{
+  moonReal=v;
+  if(v && !trueSize){                      // 开真实距离 → 必须同时用真实大小
+    trueSize=true; ckTrue.classList.add('on');
+  }
+  refreshInfo();
+});
+
+/* 滑块 */
+const sSpeed=document.getElementById('sSpeed'), sSize=document.getElementById('sSize');
+sSpeed.addEventListener('input', e=>setRate(e.target.value));
+setRate(sSpeed.value);
+const SIZE_BASE = 20000;                 // 滑块满量程 = 真实半径的 20000 倍
+function sliderToSize(v){ return Math.round(Math.pow(SIZE_BASE, v/1000)); }
+/* 大小滑块的取景策略：**不重新取景**。
+   原实现是「松手 260ms 后 flyToPose 到 r*mul」，有两个问题：
+     ① 距离倍数用档位 r<0.6?16:(r<3?11:8.2) 硬切分 —— 半径跨过 0.6 或 3
+        时倍数从 16 跳到 11 再跳到 8.2，画面上就是「视野距离猛地一跳」。
+     ② 飞行动画本身也是一次跳变。
+   现在改成：距离**按半径等比缩放**（ratio = 新半径/旧半径），
+   这样屏幕上星球的视角大小完全不变 —— 用户调滑块的意图是
+   「让星球看起来更大」，而不是「让视野跳来跳去」。
+   远景（未选中）时保持现有行为：什么都没在跟随，本来就不该动。 */
+function reframeAfterSizeChange(prevR){
+  if(camMode!=='follow' || !selected) return;
+  const r = bodyRadius(selected.def.r);
+  if(prevR > 1e-9 && r > 1e-9){
+    followDist = clampDist(followDist * (r/prevR));
+    // 当前实际距离同步按比例缩放，避免 applyZoom 再拉一次
+    const k = r/prevR;
+    _camDir.copy(camera.position).sub(controls.target).normalize();
+    camera.position.copy(controls.target).addScaledVector(_camDir,
+      clampDist(camera.position.distanceTo(controls.target)*k));
+  }else{
+    const mul = selected===sunBody ? 7.5 : frameMulFor(r);
+    followDist = clampDist(r*mul);
+  }
+  if(!zoomAuto) zoomUser = followDist;
+}
+sSize.addEventListener('input', e=>{
+  const v=+e.target.value;
+  const prevR = selected ? bodyRadius(selected.def.r) : 0;
+  sizeMul = sliderToSize(v);
+  sSize.style.setProperty('--p', v/10+'%');
+  document.getElementById('vSize').textContent = '×'+sizeMul;
+  reframeAfterSizeChange(prevR);
+  refreshInfo();
+});
+(function(){
+  // 让 612 这个默认位置对应 ×1500
+  const want = Math.round(Math.log(1500)/Math.log(SIZE_BASE)*1000);
+  sSize.value = want;
+  sizeMul = 1500;
+  sSize.style.setProperty('--p', want/10+'%');
+  document.getElementById('vSize').textContent = '×1500';
+})();
+
+/* 距离模式 */
+function setDistMode(m){
+  const changed = (distMode !== m);
+  distMode=m;
+  document.getElementById('mReal').classList.toggle('on', m==='real');
+  document.getElementById('mLog').classList.toggle('on', m==='log');
+  while(gridGroup.children.length) gridGroup.remove(gridGroup.children[0]);
+  buildGrid();
+  if(changed){
+    // 距离映射变了，天体位置会跳 → 相机必须重新取景（平滑飞过去）
+    update(0);
+    if(selected){
+      followDist = autoDistFor(selected);
+      zoomAuto = true; zoomUser = 0;
+      document.getElementById('bAutoDist').classList.add('on');
+      const pose = poseFor(selected, frameMulFor(bodyRadius(selected.def.r)));
+      flyToPose(pose.pos, pose.tgt, 0.8);
+    } else {
+      // 无选中：按当前模式的全览机位重新取景（对数模式下行星在 1500–2900
+      // 单位环带，旧写法停在 ≈416 的真实模式机位上，切完模式画面全空）。
+      const pose = overviewPose();
+      flyToPose(pose.pos, pose.tgt, 0.8);
+      zoomAuto = true; zoomUser = 0;
+      document.getElementById('bAutoDist').classList.add('on');
+    }
+  }
+  refreshInfo();
+}
+document.getElementById('mReal').onclick=()=>setDistMode('real');
+document.getElementById('mLog').onclick=()=>setDistMode('log');
+
+/* 播放控制 */
+function setPaused(p){
+  paused=p;
+  document.getElementById('bPlay').textContent = p?'▶ 播放':'⏸ 暂停';
+  document.getElementById('bPlay2').textContent = p?'▶':'⏸';
+}
+function togglePlay(){ setPaused(!paused); }
+document.getElementById('bPlay').onclick = togglePlay;
+document.getElementById('bPlay2').onclick = togglePlay;
+document.getElementById('bNow').onclick = ()=>{ jd = dateToJD(new Date());
+  document.getElementById('dDate').value = new Date().toISOString().slice(0,10); };
+document.getElementById('bRev').onclick = e=>{
+  dir = -dir; e.target.textContent = dir>0 ? '◀ 逆转' : '▶ 正转';
+  e.target.classList.toggle('on', dir<0);
+};
+document.getElementById('dDate').addEventListener('change', e=>{
+  const v = e.target.value; if(!v) return;
+  const d = new Date(v+'T00:00:00Z');
+  jd = dateToJD(d);
+});
+document.getElementById('dDate').value = new Date().toISOString().slice(0,10);
+
+function resetView(){
+  follow=false; selected=null;
+  setHover(null);
+  bodies.forEach(x=>{ if(x.listEl) x.listEl.classList.remove('sel'); });
+  const pose = overviewPose();
+  flyToPose(pose.pos, pose.tgt, 0.95);
+  refreshInfo();
+}
+/* ---------- 全览机位：按当前距离模式取尺度 ----------
+   无选中时的「重置 / 全览 / 切距离模式」都走这里。
+   旧写法固定用真实模式的 (150,205,330)（模长 ≈416）——对数模式下
+   行星轨道全被压在 150–3000 单位的环带里，相机停在 416 就意味着
+   一颗行星都不在画面上，看起来像切完模式就黑屏。 */
+function overviewPose(){
+  if(distMode === 'log'){
+    const R = 150 + 2850;               // 对数映射下最外轨道（冥王星）显示半径
+    const d = R*2.4;                    // 48° 垂直视场下恰好容纳半径 R 的环带
+    const dir = new THREE.Vector3(0.28, 0.62, 0.73).normalize();
+    return { pos: dir.multiplyScalar(d), tgt: new THREE.Vector3(0,0,0) };
+  }
+  // 真实模式：根据视口宽高自适应，保证内太阳系完整入画（原值保留）
+  const aspect = innerWidth/innerHeight;
+  return { pos: new THREE.Vector3(150, 205*Math.max(1,1.35/aspect), 330*Math.max(1,1.15/aspect)),
+           tgt: new THREE.Vector3(0,0,0) };
+}
+document.getElementById('bReset').onclick = resetView;
+
+/* ============================================================
+   视角控制：距离滑块 / 平移 / 俯视侧视
+   ============================================================ */
+const ZOOM_MIN = 0.004, ZOOM_MAX = 200000;
+let zoomAuto = true, zoomUser = 0;
+
+/* ---------- 最近观察距离：永不低于天体半径的 2 倍 ----------
+   需求是「拉近到极限也不能穿模」。之前的 controls.minDistance = 0.02
+   是个与天体无关的常数：地球半径 2.39，把相机推到 0.02 就直接钻进球心，
+   画面变成一片糊色（背面的三角形顺序还可能闪烁）。
+   改成按「当前关注天体的半径 × 2」动态计算：
+     · 关注对象 = selected（点选跟随）或 hovered（鼠标悬浮）
+     · 都没有 → 取离 controls.target 最近的天体
+   近裁剪面必须同步跟随，否则 near=0.02 会把半径 2.39 的球整个切掉
+   （只剩一个小圆点甚至直接消失）。 */
+let _minDist = ZOOM_MIN;
+function computeMinDist(){
+  let r = 0;
+  const b = selected || hovered;
+  if(b){
+    r = bodyRadius(b.def.r);
+  }else{
+    let best = Infinity;
+    for(const x of bodies){
+      const d = x.pos.distanceTo(controls.target);
+      if(d < best){ best = d; r = bodyRadius(x.def.r); }
+    }
+  }
+  _minDist = Math.max(ZOOM_MIN, r*2);
+  controls.minDistance = _minDist;
+  const near = clamp(_minDist*0.04, 4e-4, 0.02);
+  if(Math.abs(camera.near - near) > 1e-9){
+    camera.near = near;
+    camera.updateProjectionMatrix();
+  }
+  return _minDist;
+}
+/** 所有「期望距离」统一走这里收口，保证任何路径都不会低于 2R */
+function clampDist(d){
+  return clamp(d, computeMinDist(), ZOOM_MAX);
+}
+
+/* ---------- CAD 式平移模式 ----------
+   原生 3D 软件靠右键平移，但单手操作时按右键很难受（尤其触控板）。
+   CAD 的做法是「模式开关 + 左键当前工具」：开了平移模式，左键就变平移，
+   旋转让给中键。关闭时保持原版手感。
+
+   实现上不用改库：OrbitControls r147 的onMouseDown 读的是
+   scope.mouseButtons.{LEFT,MIDDLE,RIGHT}，直接换映射即可。
+   中键原本是 DOLLY（推拉），但滚轮缩放已被自定义 handler 独占
+   （见下方wheel 监听，enableZoom=false），中键空着正好拿来旋转。 */
+const MOUSE_ORDINARY = {LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.ROTATE, RIGHT:THREE.MOUSE.PAN};
+const MOUSE_PANMODE = {LEFT:THREE.MOUSE.PAN,    MIDDLE:THREE.MOUSE.ROTATE, RIGHT:THREE.MOUSE.PAN};
+let panMode = false;
+const bPanMode = document.getElementById('bPanMode');
+const mouseHint = document.getElementById('mouseHint');
+function applyMouseMap(){
+  const m = panMode ? MOUSE_PANMODE : MOUSE_ORDINARY;
+  controls.mouseButtons.LEFT   = m.LEFT;
+  controls.mouseButtons.MIDDLE = m.MIDDLE;
+  controls.mouseButtons.RIGHT  = m.RIGHT;
+  bPanMode.classList.toggle('on', panMode);
+  mouseHint.textContent = panMode
+    ? '左键拖拽=平移 · 中键拖拽=旋转 · 滚轮=缩放'
+    : '左键拖拽=旋转 · 右键拖拽=平移 · 滚轮=缩放';
+}
+bPanMode.onclick = ()=>{ panMode = !panMode; applyMouseMap(); };
+applyMouseMap();
+/* 快捷键：空格已被播放占用，用 Tab 切模式。需 preventDefault，
+   否则 Tab 会把焦点移走，按钮高亮与实际状态就脱节了。 */
+addEventListener('keydown', e=>{
+  if(e.key==='Tab' && !e.ctrlKey && !e.metaKey && !e.altKey){
+    e.preventDefault(); panMode = !panMode; applyMouseMap();
+  }
+});
+
+/** 依据滑块位置算出期望距离（对数映射，覆盖 8 个数量级） */
+function sliderToDist(v){
+  const t = v/1000;
+  return ZOOM_MIN * Math.pow(ZOOM_MAX/ZOOM_MIN, t);
+}
+function fmtDist(d){
+  const r = bodyRadius(selected ? selected.def.r : 6371);
+  if(d < r*3)    return (d/r).toFixed(1)+'× 半径';
+  if(d < 0.02)   return (d*SCENE_SCALE).toFixed(3)+' AU';
+  if(d < 300)    return d.toFixed(1)+' 单位';
+  if(d < 3e5)    return (d/1000).toFixed(1)+' 千单位';
+  return (d/1e6).toFixed(1)+' 百万单位';
+}
+const sZoom = document.getElementById('sZoom');
+sZoom.addEventListener('input', e=>{
+  const v = +e.target.value;
+  sZoom.style.setProperty('--p', (v/10)+'%');
+  zoomUser = sliderToDist(v);
+  zoomAuto = false;
+  document.getElementById('bAutoDist').classList.remove('on');
+  applyZoom();
+});
+document.getElementById('bAutoDist').onclick = ()=>{
+  zoomAuto = true; zoomUser = 0;
+  document.getElementById('bAutoDist').classList.add('on');
+  if(selected) followDist = autoDistFor(selected);
+  else { resetView(); }
+};
+document.getElementById('bFitAll').onclick = ()=>{ zoomAuto=true; resetView(); };
+
+/** 取景距离倍数：必须**连续**，不能按半径分档硬切。
+ *  旧写法 r<0.6?16:(r<3?11:8.2) 在 0.6 / 3.0 处会跳档，
+ *  调大小滑块时半径正好跨过这两个值 → 画面距离猛跳一下。
+ *  换成指数衰减：小天体离得近些（看细节），大天体远些（看全貌），
+ *  过渡平滑无跳变。 */
+function frameMulFor(r){
+  return 8.2 + 8.5*Math.exp(-r/0.9);
+}
+function autoDistFor(b){
+  const r = bodyRadius(b.def.r);
+  const mul = b===sunBody ? 7.5 : frameMulFor(r);
+  let d = clampDist(r*mul);
+  /* 有卫星系统的行星：取景距离至少把最外层卫星轨道包进来（约 2 倍），
+     否则聚焦木星/土星时 16 颗卫星几乎全在画面外，只能手动缩小去找。
+     卫星显示轨道半径 = max(pr·R, pr·1.9)，与 updateMoons 同一公式。 */
+  if(b.moons && b.moons.length){
+    const maxOrbit = Math.max(...b.moons.map(m=>Math.max(r*m.R, r*1.9)));
+    d = clampDist(Math.max(d, maxOrbit*2.0));
+  }
+  return d;
+}
+/** 把当前距离平滑推向 zoomUser（不改变视线方向） */
+function applyZoom(lerp){
+  const d = camera.position.distanceTo(controls.target);
+  if(d < 1e-9) return;
+  const want = clampDist(zoomUser);
+  /* lerp 是缓动系数：滑块拖动要阻尼（避免大跳变），滚轮不需要。
+     滚轮每格只改 1.18 倍距离，若也走 0.28 缓动，一格只走 5%，
+     滚起来会非常迟钝。wheel 传 1 = 直接到位。 */
+  const k = (lerp==null) ? 0.28 : lerp;
+  const nd = d + (want-d)*k;
+  _camDir.copy(camera.position).sub(controls.target).normalize();
+  camera.position.copy(controls.target).addScaledVector(_camDir, nd);
+}
+function syncZoomUI(){
+  const d = camera.position.distanceTo(controls.target);
+  if(zoomAuto){
+    document.getElementById('vZoom').textContent = '自动';
+  } else {
+    document.getElementById('vZoom').textContent = fmtDist(d);
+  }
+}
+
+/* 平移：在相机水平面内平移 controls.target */
+const _panV = new THREE.Vector3();
+function panBy(dx, dz){
+  // 屏幕方向 → 世界方向
+  const right = _camDir.copy(camera.position).sub(controls.target).cross(
+    new THREE.Vector3(0,1,0)).normalize();
+  if(!isFinite(right.x) || right.lengthSq()<1e-9) right.set(1,0,0);
+  const fwd = new THREE.Vector3().copy(controls.target).sub(camera.position).normalize();
+  const flat = new THREE.Vector3(fwd.x,0,fwd.z);
+  if(flat.lengthSq()<1e-9) flat.set(0,0,1);
+  flat.normalize();
+  const step = camera.position.distanceTo(controls.target) * 0.12;
+  _panV.copy(right).multiplyScalar(dx*step).addScaledVector(flat, -dz*step);
+  controls.target.add(_panV);
+  camera.position.add(_panV);
+  // 平移意味着脱离跟随
+  if(camMode==='follow'){ camMode='idle'; follow=false; }
+}
+/* 方向键按钮：按住持续平移 */
+document.querySelectorAll('.pad[data-dx]').forEach(p=>{
+  let timer=null, rep=null;
+  const dx=+p.dataset.dx, dz=+p.dataset.dz;
+  const start=e=>{
+    e.preventDefault();
+    p.classList.add('on');
+    panBy(dx,dz);
+    clearInterval(rep);
+    rep=setInterval(()=>panBy(dx,dz), 40);
+  };
+  const stop=()=>{ p.classList.remove('on'); clearInterval(rep); clearTimeout(timer); };
+  p.addEventListener('pointerdown', start);
+  p.addEventListener('pointerup', stop);
+  p.addEventListener('pointerleave', stop);
+  p.addEventListener('pointercancel', stop);
+});
+document.getElementById('padMid').onclick = ()=>{ controls.target.set(0,0,0); };
+
+/* 俯视 / 侧视：沿球面插值视角方向。
+   ⚠ 这里原来在 flyToPose 之后又写了 camMode='idle'; endFly();
+     flyToPose 内部把 camMode 置为 'fly' 并锁controls.enabled=false，
+     紧接着这行又把状态改回 idle、提前解锁 —— 飞行在第一帧就被取消，
+     表现就是「点了没反应」。正确做法是只让 flyToPose 接管，
+     到位时由 updateCamera 统一调 endFly()。 */
+function setViewDir(kind){
+  const d = clampDist(camera.position.distanceTo(controls.target));
+  const cur = camera.position.clone().sub(controls.target).normalize();
+  const to = kind==='top' ? new THREE.Vector3(0.02, 1, 0.06) : new THREE.Vector3(0.02, 0.10, 1);
+  to.normalize();
+  /* 一步到位的球面旋转：用四元数最短弧把当前方向整体转到目标方向。
+     旧写法 mid = (cur+to)/2 是「方向中点」——每次点击只走一半路程，
+     俯视连点 3 次才 0.85→0.98（几何级数收敛，永远差最后一点）。
+     平滑过渡由 flyToPose 的缓动承担，这里直接给出终点位姿。 */
+  const q = new THREE.Quaternion().setFromUnitVectors(cur, to);
+  const dest = cur.clone().applyQuaternion(q).multiplyScalar(d).add(controls.target);
+  // 视角切换只是换朝向，不该脱离当前关注的天体
+  follow = !!(selected && follow);
+  flyToPose(dest, controls.target.clone(), 0.7);
+}
+document.getElementById('bTop').onclick  = ()=>setViewDir('top');
+document.getElementById('bSide').onclick = ()=>setViewDir('side');
+
+/* 键盘方向键平移 */
+addEventListener('keydown', e=>{
+  const k=e.key;
+  if(k==='ArrowLeft')  { panBy(-1,0); e.preventDefault(); }
+  if(k==='ArrowRight') { panBy(1,0);  e.preventDefault(); }
+  if(k==='ArrowUp')    { panBy(0,-1); e.preventDefault(); }
+  if(k==='ArrowDown')  { panBy(0,1);  e.preventDefault(); }
+});
+
+/* 天体列表（按类别分组） */
+const CATS = [
+  {k:'star',  n:'恒星',   ic:'☀'},
+  {k:'ter',   n:'类地行星', ic:'⛨'},
+  {k:'gas',   n:'气态巨行星', ic:'◉'},
+  {k:'ice',   n:'冰巨行星',  ic:'❄'},
+  {k:'dwarf', n:'矮行星',   ic:'⚪'},
+  {k:'moon',  n:'卫星',     ic:'☾'},
+];
+const plist = document.getElementById('plist');
+bodies.slice().sort((a,b)=>{
+  const ca=CATS.findIndex(c=>c.k===a.def.cls), cb=CATS.findIndex(c=>c.k===b.def.cls);
+  if(ca!==cb) return ca-cb;
+  return (a.grp?a.grp.position.length():0)-(b.grp?b.grp.position.length():0);
+}).forEach(b=>{
+  const ci = CATS.findIndex(c=>c.k===b.def.cls);
+  if(ci>=0 && !plist.querySelector('.cat[data-k="'+b.def.cls+'"]')){
+    const h=document.createElement('div');
+    h.className='cat'; h.dataset.k=b.def.cls;
+    h.innerHTML=`<i>${CATS[ci].ic}</i><span>${CATS[ci].n}</span>`+
+                `<u>${bodies.filter(x=>x.def.cls===b.def.cls).length}</u>`;
+    plist.appendChild(h);
+  }
+  const el=document.createElement('div');
+  el.className='pl';
+  const hex='#'+new THREE.Color(b.def.c).getHexString();
+  el.innerHTML = `<em style="background:${hex};color:${hex}"></em><span>${b.def.n}</span>`;
+  el.onclick = ()=>select(b);
+  el.onmouseenter = ()=>setHover(b);
+  el.onmouseleave = ()=>{ if(hovered===b) setHover(null); };
+  b.listEl = el;
+  plist.appendChild(el);
+});
+
+function select(b, instant){
+  bodies.forEach(x=>{ if(x.listEl) x.listEl.classList.remove('sel'); });
+  b.listEl.classList.add('sel');
+  selected = b; follow = true;
+  // 距离倍数：小天体要看得清，大天体（太阳）要看得全
+  followDist = autoDistFor(b);
+  zoomAuto = true; zoomUser = 0;
+  document.getElementById('bAutoDist').classList.add('on');
+  // 保持当前视线方向，飞过去而不是瞬移
+  _camDir.copy(camera.position).sub(controls.target);
+  if(_camDir.lengthSq() < 1e-12) _camDir.set(0.42,0.34,0.84);
+  _camDir.normalize();
+  // 已在附近就短促一点，远距离飞久一点（最多 1.1s）
+  const d = camera.position.distanceTo(b.pos);
+  const dur = instant ? 0 : clamp(0.42 + d*0.0022, 0.42, 1.1);
+  flyToPose(b.pos.clone().addScaledVector(_camDir, followDist), b.pos.clone(), dur);
+  refreshInfo();
+}
+
+/* 射线拾取 */
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+let downX=0, downY=0;
+renderer.domElement.addEventListener('pointerdown', e=>{ downX=e.clientX; downY=e.clientY; });
+renderer.domElement.addEventListener('pointermove', e=>{
+  mouseX=e.clientX; mouseY=e.clientY; mouseInside=true;
+});
+renderer.domElement.addEventListener('pointerleave', ()=>{ mouseInside=false; setHover(null); });
+
+/* 滚轮缩放：与距离滑块联动（同一个 zoomUser）
+   关键：改完 zoomUser 必须调 applyZoom() 把值写进 camera.position。
+   漏了这一步就只动滑块不动画面 —— 因为 idle 状态下没有任何其他代码
+   消费 zoomUser（只有 follow 分支会读它）。滑块 input 路径就是这么做的。*/
+renderer.domElement.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const d = camera.position.distanceTo(controls.target);
+  const cur = zoomAuto ? d : zoomUser;
+  const f = e.deltaY>0 ? 1.18 : 1/1.18;
+  zoomUser = clamp(cur*f, ZOOM_MIN, ZOOM_MAX);
+  zoomAuto = false;
+  document.getElementById('bAutoDist').classList.remove('on');
+  // 反算滑块位置保持 UI 同步
+  const t = Math.log(zoomUser/ZOOM_MIN)/Math.log(ZOOM_MAX/ZOOM_MIN);
+  sZoom.value = Math.round(clamp(t,0,1)*1000);
+  sZoom.style.setProperty('--p', sZoom.value/10+'%');
+  applyZoom(1);         // ← 缺这行就是「滑块动、画面不动」
+  syncZoomUI();
+}, {passive:false});
+renderer.domElement.addEventListener('pointerup', e=>{
+  if(Math.hypot(e.clientX-downX, e.clientY-downY) > 5) return;
+  // 优先用悬浮判定（屏幕空间），命中不了再退回射线
+  if(hovered){ select(hovered); return; }
+  ndc.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(scene.children, true);
+  for(const h of hits){
+    let o = h.object;
+    while(o){
+      const b = bodies.find(x=>x.grp===o || x.mesh===o);
+      if(b){ select(b); return; }
+      o = o.parent;
+    }
+  }
+});
+
+/* ---------- 信息面板 ---------- */
+const infoEl = document.getElementById('info');
+function refreshInfo(){
+  const b = selected || sunBody;
+  const d = b.def;
+  const isSun = b===sunBody, isMoon = b===moonBody;
+  let helio = 0, earthD = 0, v = 0;
+  const idx = bodies.indexOf(b);
+  if(!isSun && !isMoon){
+    const st = planetState(PLANETS[planetBodies.indexOf(b)], jd);
+    helio = Math.hypot(st.x,st.y,st.z);
+    // 速度：与悬浮卡共用同一实现（当前时刻数值微分），保证两处口径一致
+    v = planetSpeedKms(PLANETS[planetBodies.indexOf(b)]);
+    const de = earthPosNow();
+    earthD = Math.hypot(st.x-de.x, st.y-de.y, st.z-de.z);
+  } else if(isMoon){
+    const mg = moonGeo(jd);
+    helio = 1 + mg.dist; earthD = mg.dist;
+  }
+  const dispMul = mapAU(1)/ (1*SCENE_SCALE);
+  const rows = [];
+  rows.push(`<div><span class="k">日心距离</span><span class="v">${helio?helio.toFixed(4)+' AU':'—'}</span></div>`);
+  if(helio) rows.push(`<div><span class="k">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="v">${(helio*AU_KM/1e6).toFixed(2)} 百万 km</span></div>`);
+  if(earthD) rows.push(`<div><span class="k">地心距离</span><span class="v">${earthD.toFixed(4)} AU</span></div>`);
+  if(v) rows.push(`<div><span class="k">轨道速度</span><span class="v">${v.toFixed(2)} km/s</span></div>`);
+  if(!isSun && !isMoon){
+    const T = Math.pow(planetState(PLANETS[planetBodies.indexOf(b)], jd).el.a,1.5);
+    rows.push(`<div><span class="k">公转周期</span><span class="v">${T.toFixed(2)} 年</span></div>`);
+  }
+  if(!isSun) rows.push(`<div><span class="k">直径</span><span class="v">${(d.r*2).toLocaleString()} km</span></div>`);
+  if(!isSun) rows.push(`<div><span class="k">自转周期</span><span class="v">${Math.abs(d.rot).toFixed(3)} 天${d.rot<0?' (逆)':''}</span></div>`);
+  if(!isSun) rows.push(`<div><span class="k">转轴倾角</span><span class="v">${d.tilt.toFixed(2)}°</span></div>`);
+  const scaleInfo = trueSize ? '真实大小' : ('×'+sizeMul);
+  if(isMoon){
+    // 面板可能被 sizeMul/距离模式开关在 update() 之外触发，先按当前地球日心距同步一次
+    syncMoonBoost(planetBodies[2].pos.length());
+    const orb = mapMoon(moonGeo(jd).dist);
+    rows.push(`<div><span class="k">显示放大</span><span class="v">距离 ×${moonBoost().toFixed(0)}</span></div>`);
+    rows.push(`<div><span class="k">轨道半径</span><span class="v">${orb.toFixed(1)} 单位（地球半径 ×${(orb/bodyRadius(6371)).toFixed(1)}）</span></div>`);
+    rows.push(`<div><span class="k">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="v">地球在 ${planetBodies[2].pos.length().toFixed(0)} 单位处</span></div>`);
+  }
+  else if(!isSun) rows.push(`<div><span class="k">显示比例</span><span class="v">${scaleInfo}</span></div>`);
+
+  infoEl.innerHTML =
+    `<div class="nm">${d.n}</div>`+
+    `<div class="sub2">${d.note||''}</div>`+
+    rows.join('');
+}
+let _cacheJD=0;
+function earthPosNow(){
+  const e = planetState(PLANETS[2], jd);
+  return {x:e.x,y:e.y,z:e.z};
+}
+setInterval(()=>{ if(selected) refreshInfo(); }, 200);
+
+/* ---------- 键盘 ---------- */
+addEventListener('keydown', e=>{
+  if(e.code==='Space'){ e.preventDefault(); togglePlay(); }
+  if(e.key==='r'||e.key==='R') resetView();
+});
+
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* 启动 */
+(function init(){
+  // 预跑几帧，让轨道线/标签/位置立刻正确
+  for(let i=0;i<3;i++) update(0.0001);
+  // 初始位姿：看内太阳系全景，不跟随（避免一进来镜头就动）
+  const aspect = innerWidth/innerHeight;
+  controls.target.set(0,0,0);
+  camera.position.set(150, 205*Math.max(1,1.35/aspect), 330*Math.max(1,1.15/aspect));
+  controls.update();
+  select(EARTH, true);            // instant=true：只选中不飞行
+  follow = false;
+  camMode = 'idle';
+  controls.target.set(0,0,0);
+  /* 顺序很关键：select() 可能经 flyToPose() 把 controls.enabled 置 false，
+     而恢复 enabled 的唯一入口 endFly() 只在 updateCamera 的 fly 完成分支里调。
+     如果这里先写 controls.enabled=true 再让 camMode 被覆盖成 'idle'，
+     endFly() 就永远不会跑 —— controls 会永久锁死，滚轮/拖拽/平移全部失效。
+     所以 camMode 定好之后再解锁，且直接走 endFly() 保证状态一致。 */
+  endFly();
+  refreshInfo();
+  requestAnimationFrame(t=>{ last=t; loop(t); });
+})();
+
+/* ---------- 自动化验证钩子（供无头浏览器抓取渲染结果，不影响正常使用） ---------- */
+window.__solar = {
+  bodies, sunBody, moonBody, planetBodies, camera, controls, renderer, scene,
+  select, resetView, update, refreshInfo, TEX, PHYS, ATMOS, EARTH_LAND, ALBEDO_TEX,
+  gridGroup, distModeRef:()=>distMode, ZOOM_MIN, ZOOM_MAX, bodyRadius,
+  sunGroup, sunGlow, corona,
+  SUN_GLOW_BASE, SUN_SIZE_REF,
+  MOONS, MOON_LOOK, MOON_DAY, moonSystems,
+  CONTINENTS, buildLandMask, LANDMASK:()=>LANDMASK,
+  clampDist, computeMinDist, frameMulFor, MOON_ORBIT_FRAC, moonBoost,
+  sizeRef:()=>sizeMul, setSizeMul:v=>{ sizeMul=v; update(0); },
+  setViewDir,
+  pause(){ paused=true; },
+  /** 把相机放到指定天体的正面附近，用于截图。
+   *  night=true 时把相机放到**背阳面**（沿天体→太阳的反方向），
+   *  用来验证夜面城市灯光这类只在夜面可见的效果。
+   *  默认（向阳面）则沿天体→太阳方向摆，保证采样到的是被照亮的半球——
+   *  固定世界坐标偏移会让不同天体受光比例不同，表面颜色判据就不稳定了。 */
+  frame(name, distMul, night){
+    const b = bodies.find(x=>x.def.n===name);
+    if(!b) return null;
+    paused = true;
+    const r = Math.max(bodyRadius(b.def.r), 1e-6);
+    const d = r * (distMul || 4.2);
+    const off = new THREE.Vector3(0.42, 0.26, 0.87).normalize();
+    const hasSun = b.grp.position.lengthSq() > 1e-12;
+    if(hasSun){
+      // 指向太阳的方向（天体在原点附近，-pos 即朝太阳）
+      const toSun = b.grp.position.clone().normalize().negate();
+      const tan = new THREE.Vector3(0,1,0).cross(toSun);
+      if(tan.lengthSq() > 1e-9) tan.normalize(); else tan.set(0,1,0);
+      if(night){
+        // 背阳面：沿反方向再偏 13°，避免正对全黑、也保留晨昏线
+        off.copy(toSun).negate().addScaledVector(tan, 0.23).normalize();
+      }else{
+        // 向阳面：偏 26°，既完整看到受光半球，又能看到一点晨昏线
+        off.copy(toSun).addScaledVector(tan, 0.48).normalize();
+      }
+    }
+    controls.target.copy(b.pos);
+    camera.position.copy(b.pos).add(off.multiplyScalar(d));
+    camera.lookAt(b.pos);
+    camera.updateProjectionMatrix();
+    controls.update();
+    return {name, r, d, night: !!night, pos:b.pos.toArray()};
+  },
+  /** 读回画布像素统计，用来客观判断"画出来是什么样" */
+  stats(){
+    const cv = renderer.domElement;
+    const g = document.createElement('canvas');
+    g.width = cv.width; g.height = cv.height;
+    const ctx = g.getContext('2d');
+    ctx.drawImage(cv, 0, 0);
+    const W = g.width, H = g.height;
+    const d = ctx.getImageData(0,0,W,H).data;
+    let n=0, sr=0,sg=0,sb=0, lit=0, unlit=0;
+    for(let i=0;i<d.length;i+=4){
+      const r=d[i],gg=d[i+1],b=d[i+2];
+      sr+=r; sg+=gg; sb+=b; n++;
+      const lum = r*0.3+gg*0.59+b*0.11;
+      if(lum>26) lit++; else unlit++;
+    }
+    return {w:W, h:H, meanR:sr/n, meanG:sg/n, meanB:sb/n,
+            litFrac:lit/n, unlitFrac:unlit/n};
+  },
+  /** 采样天体圆盘区域内的颜色（排除背景）。
+   *  采样半径按天体在屏幕上的**实际投影**算，而不是固定比例——
+   *  否则近景时采样框只盖住球面一小块，统计结果随距离漂移。 */
+  diskStats(name){
+    const b = bodies.find(x=>x.def.n===name);
+    if(!b) return null;
+    const cv = renderer.domElement;
+    const g = document.createElement('canvas');
+    g.width=cv.width; g.height=cv.height;
+    g.getContext('2d').drawImage(cv,0,0);
+    const p = b.pos.clone().project(camera);
+    const cx = Math.round((p.x*0.5+0.5)*g.width);
+    const cy = Math.round((-p.y*0.5+0.5)*g.height);
+    // 屏幕半径 ≈ 渲染半径 / (相机距离·tan(fov/2)) × 画布高的一半
+    const dist = Math.max(camera.position.distanceTo(b.pos), 1e-6);
+    const rr = Math.round(clamp(
+      bodyRadius(b.def.r)/(dist*Math.tan(camera.fov*PI/360)) * (g.height/2), 6, g.height/2));
+    const d = g.getContext('2d').getImageData(
+      clamp(cx-rr,0,g.width-1), clamp(cy-rr,0,g.height-1), rr*2, rr*2).data;
+    let n=0,sr=0,sg=0,sb=0, sat=0, edge=0, edgeN=0, cn=0, cR=0, cG=0;
+    for(let y=0;y<rr*2;y++)for(let x=0;x<rr*2;x++){
+      const i=(y*rr*2+x)*4, r=d[i],gg=d[i+1],b2=d[i+2];
+      const mx=x-rr, my=y-rr;
+      const rad=Math.hypot(mx,my)/rr;
+      if(rad>1) continue;
+      sr+=r; sg+=gg; sb+=b2; n++;
+      const mx2=Math.max(r,gg,b2), mn2=Math.min(r,gg,b2);
+      sat += mx2>0 ? (mx2-mn2)/mx2 : 0;
+      if(rad>0.82){ edge += 0.3*r+0.59*gg+0.11*b2; edgeN++; }   // 边缘环（大气/光晕）
+      /* 中心区（rad<0.5）单独统计。meanR 是**整个圆盘**的平均，
+         而太阳有 limbDarkening —— 边缘被压到 ~30%。天体越大，
+         边缘昏暗区占圆盘比例越高，meanR 就越低：
+         太阳半径从 42px 变83px 后 meanR 从 >120 掉到 71，
+         那是判据失效，不是天体变暗。核心亮度要看中心区。 */
+      if(rad<0.5){ cR+=r; cG+=gg; cn++; }
+    }
+    if(!n) return null;
+    return {meanR:sr/n, meanG:sg/n, meanB:sb/n, sat:sat/n,
+            coreR:cn?cR/cn:0, coreG:cn?cG/cn:0,
+            edgeLum:edgeN?edge/edgeN:0, cx, cy, rr};
+  },
+  /** 天体圆盘内「高饱和暖色」像素计数 —— 用于验证地球夜面灯光的昼夜遮罩。
+   *  必须按**实际投影**取样（cx/cy/rr 来自 project()），不能用「画面中心 +
+   *  固定半径」猜：左侧控制面板会挤压可用区域，天体未必落在画面正中。
+   *  判据口径也别搞错 —— 昼面的沙漠/地表本身就偏暖，统计的是
+   *  「高饱和暖橙」（城市灯光），且要限定在圆盘内以排除星空。 */
+  warmDisk(name, minR, minGB, minGB2){
+    const b = bodies.find(x=>x.def.n===name);
+    if(!b) return null;
+    const cv = renderer.domElement;
+    const g = document.createElement('canvas');
+    g.width=cv.width; g.height=cv.height;
+    g.getContext('2d').drawImage(cv,0,0);
+    /* 注意：同一对象字面量里的方法不是作用域内标识符，
+       直接写 diskStats(name) 会 ReferenceError —— 必须用 this.diskStats()。 */
+    const st = this.diskStats(name);
+    if(!st) return null;
+    const d = g.getContext('2d').getImageData(
+      clamp(st.cx-st.rr,0,g.width-1), clamp(st.cy-st.rr,0,g.height-1),
+      st.rr*2, st.rr*2).data;
+    let warm=0, disk=0, lit=0;
+    for(let y=0;y<st.rr*2;y++)for(let x=0;x<st.rr*2;x++){
+      const i=(y*st.rr*2+x)*4, r=d[i],gg=d[i+1],b2=d[i+2];
+      if(Math.hypot(x-st.rr, y-st.rr)/st.rr > 1) continue;
+      disk++;
+      /* 「非黑像素」比色相判据更可靠：夜面城市灯光是**孤立亮点**，
+         面积很小（约占圆盘 0.1~0.5%），按饱和度筛容易因为抗锯齿、
+         缩放插值而漏掉。改用「亮度超过阈值且明显暖」双条件。 */
+      const lum = 0.3*r+0.59*gg+0.11*b2;
+      if(lum > (minR||26)) lit++;
+      if(lum > (minR||26) && r>gg && gg>=b2) warm++;
+    }
+    return {warm, lit, disk, cx:st.cx, cy:st.cy, rr:st.rr};
+  },
+  /** 地球陆地掩膜占比（直接跑掩膜函数，不靠颜色反推——极冠/沙漠会让颜色判据失真） */
+  landFrac(threshold){
+    buildLandMask(1024, 512);
+    const t = threshold==null ? EARTH_LAND : threshold;
+    let land=0, n=0;
+    for(let y=0;y<512;y++)for(let x=0;x<1024;x++){
+      n++;
+      if(earthLandField((x+0.5)/1024, (y+0.5)/512) > t) land++;
+    }
+    return land/n;
+  },
+  /** 导出贴图 canvas 的统计：sRGB 均色 + **线性反照率**（与真实值可比）
+   *  注意 TEX 里混有两种形态：{map,normal} 包装对象（TEX.earth 等）
+   *  和裸 Texture（TEX.earthClouds / TEX.earthNight），两种都要认。 */
+  texStats(){
+    const out = {};
+    for(const k in TEX){
+      const t = TEX[k];
+      const src = (t && t.map) ? t.map.image : (t && t.image ? t.image : null);
+      if(!src || !src.getContext) { out[k] = null; continue; }
+      const W=64, H=32;
+      const c = document.createElement('canvas'); c.width=W; c.height=H;
+      const g = c.getContext('2d');
+      g.drawImage(src,0,0,W,H);
+      const d = g.getImageData(0,0,W,H).data;
+      let sr=0,sg=0,sb=0,alpha=0,lin=0,linN=0;
+      for(let i=0;i<d.length;i+=4){
+        sr+=d[i];sg+=d[i+1];sb+=d[i+2];alpha+=d[i+3];
+        if(d[i+3]>250){ lin += lumaLin(d[i],d[i+1],d[i+2]); linN++; }  // 透明像素不算反照率
+      }
+      const n=W*H;
+      /* albedo = 贴图原始反照率 × 标定增益 = 着色器实际用的有效反照率。
+         不能只报原始值——增益是在 shader 里施加的，不看它就等于
+         没验证标定是否生效。 */
+      out[k]={r:sr/n, g:sg/n, b:sb/n, a:alpha/n,
+              albedo: linN ? (lin/linN)*(t&&t.gain||1) : 0,
+              rawAlbedo: linN? lin/linN : 0,
+              gain: (t&&t.gain)||1,
+              sat: (function(){ // 贴图自身的色度，验证标定没削色度
+                let s=0,m=0;
+                for(let i=0;i<d.length;i+=4){
+                  if(d[i+3]<250) continue;
+                  const mx=Math.max(d[i],d[i+1],d[i+2]), mn=Math.min(d[i],d[i+1],d[i+2]);
+                  s += mx>0 ? (mx-mn)/mx : 0; m++;
+                }
+                return m? s/m : 0;
+              })(),
+              hasNormal: !!(t&&t.normal)};
+    }
+    return out;
+  }
+};
+</script>
+</body>
+</html>
