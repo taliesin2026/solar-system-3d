@@ -4,7 +4,7 @@
 
 ## 在线预览
 
-**https://taliesin2026.github.io/solar-system-3d/**
+**▶ 立即体验：https://taliesin2026.github.io/solar-system-3d/**
 
 由 GitHub Pages 托管，与仓库 `main` 分支同步，每次推送后自动重新部署。
 
