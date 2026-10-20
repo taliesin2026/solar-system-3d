@@ -657,13 +657,13 @@
       <div class="btn wide" id="bNow">今天</div>
       <div class="btn wide" id="bRev">◀ 逆转</div>
     </div>
-    <!-- 默认流速必须与滑块位置一致（评审问题 #0）：原来 HTML 写 10 天/秒、
-         滑块却放在 620 → sliderToRate(620)=44.4 天/秒，首屏 8 秒走完一年。
-         500 档正好是 10 天/秒，三处文案（vSpeed/hRate/let rate）与运行时统一。 -->
-    <div class="row"><span>时间流速</span><span class="val" id="vSpeed">10 天/秒</span></div>
-    <input type="range" id="sSpeed" min="0" max="1000" step="1" value="500"
+    <!-- 默认流速必须与滑块位置一致（评审问题 #0）：1 秒 = 1 小时（= 1/24 天/秒），
+         对滑块对数曲线反推正好是 160 档（新增换算点 [160, 1/24]）。
+         三处文案（vSpeed/hRate/let rate）与运行时统一，冷启动不再先按 10 天/秒跑。 -->
+    <div class="row"><span>时间流速</span><span class="val" id="vSpeed">1.00 小时/秒</span></div>
+    <input type="range" id="sSpeed" min="0" max="1000" step="1" value="160"
            role="slider" aria-label="时间流速" aria-valuemin="0" aria-valuemax="1000"
-           aria-valuenow="500" aria-valuetext="10 天/秒" tabindex="0">
+           aria-valuenow="160" aria-valuetext="1.00 小时/秒" tabindex="0">
     <div class="row" id="dDateRow" style="margin-top:7px"><span>跳转日期</span>
       <span class="val" id="dDateHint" style="min-width:0">1800–2050</span></div>
     <input type="date" id="dDate" aria-label="跳转到指定日期（适用范围 1800-01-01 至 2050-12-31）"
@@ -3586,7 +3586,7 @@ scrimEl.onclick = ()=>toggleHelp(false);
      「0.00 小时/秒」—— 看起来像停了，实际还在走。现在补一档「分钟/秒」。 */
 /* 旧的 SR 分段表已删（评审问题 #52：全文件无人引用）。速率换算统一走下面的 sliderToRate。 */
 function sliderToRate(v){
-  const pts=[[0,0.0002],[120,0.02],[300,0.5],[500,10],[700,120],[850,240],[1000,365]];
+  const pts=[[0,0.0002],[120,0.02],[160,1/24],[300,0.5],[500,10],[700,120],[850,240],[1000,365]];
   for(let i=0;i<pts.length-1;i++){
     if(v>=pts[i][0] && v<=pts[i+1][0]){
       const t=(v-pts[i][0])/(pts[i+1][0]-pts[i][0]);
