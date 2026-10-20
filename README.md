@@ -2,6 +2,12 @@
 
 真实轨道计算 + 自转 / 公转 / 卫星系统的交互式 3D 模拟。纯前端，双击 `index.html` 即可运行，无需联网、无需服务器。
 
+## 在线预览
+
+**https://taliesin2026.github.io/solar-system-3d/**
+
+由 GitHub Pages 托管，与仓库 `main` 分支同步，每次推送后自动重新部署。
+
 ```
 solar-system/
 ├── index.html      # 全部逻辑（单文件，5548 行）
