@@ -998,6 +998,42 @@ if (S) {
     ok('「星球大小」默认倍率 = ×1（默认不放大）', S.sizeRef() === 1, '×' + S.sizeRef());
     ok('默认 ×1 时地球显示半径 = 真实场景半径 0.00426 单位',
         Math.abs(earth - 6371 / S.AU_KM * S.SCENE_SCALE) < 1e-12, earth.toFixed(6));
+
+    /* 卫星必须是**同一套**等比口径（用户要求"卫星也同步改"）。
+       旧实现有 `Math.max(bodyRadius(半径), 母星半径×0.02)` 的下限，
+       把火卫二放大 10.9×、火卫一 6.0×、土卫一 5.9×、天卫五 2.1×——
+       行星严格等比、卫星却被下限顶破，两套口径自相矛盾。
+       这里直接量每个卫星的**实际渲染 scale**，与真实等比逐一比对。 */
+    const satBad = [];
+    for (const sat of S.satBodies) {
+      const want = sat.def.r / S.AU_KM * S.SCENE_SCALE * S.sizeRef();
+      const got = sat.grp.scale.x;
+      if (Math.abs(got - want) > 1e-18) satBad.push(`${sat.def.n} 显示 ${got.toExponential(2)} vs 等比 ${want.toExponential(2)}`);
+    }
+    ok('19 颗行星卫星的渲染半径 === 真实等比（无母星半径×0.02 下限）',
+        satBad.length === 0, satBad.slice(0, 4).join(' | ') || '全部一致');
+    // 卫星之间也必须严格等比：木卫三(2634.1km) / 木卫一(1821.6km)
+    const ganymede = S.satBodies.find(s => s.def.n === '木卫三').grp.scale.x;
+    const io = S.satBodies.find(s => s.def.n === '木卫一').grp.scale.x;
+    ok('木卫三 / 木卫一 显示半径比 === 真实半径比（2634.1/1821.6）',
+        Math.abs(ganymede / io - 2634.1 / 1821.6) < 1e-12,
+        `${(ganymede / io).toFixed(6)} vs ${(2634.1 / 1821.6).toFixed(6)}`);
+    /* 轨道半径也必须严格 = pr × aR（旧版有 pr×1.9 硬编码下限，
+       虽因最小 aR=2.76 而不生效，但注释与实现脱节是隐患） */
+    const satOrbitBad = [];
+    for (const sat of S.satBodies) {
+      const pr = S.bodyRadius(sat.parent.def.r);
+      const want = pr * sat.aR;
+      const got = Math.hypot(sat.grp.position.x, sat.grp.position.y, sat.grp.position.z);
+      if (Math.abs(got - want) > 1e-12 * Math.max(1, want)) satOrbitBad.push(`${sat.def.n} ${got.toExponential(2)} vs ${want.toExponential(2)}`);
+    }
+    ok('19 颗卫星的轨道半径 === 母星显示半径 × 真实 aR（无 1.9R 硬编码下限）',
+        satOrbitBad.length === 0, satOrbitBad.slice(0, 3).join(' | ') || '全部一致');
+    // 月球与行星卫星同一口径
+    const moonWant = 1737.4 / S.AU_KM * S.SCENE_SCALE * S.sizeRef();
+    ok('月球渲染半径 === 真实等比（与卫星同一口径）',
+        Math.abs(S.moonBody.axis.scale.x - moonWant) < 1e-18,
+        S.moonBody.axis.scale.x.toExponential(3));
   })();
 
   // 取景：全览 vs 默认必须给出不同的机位（评审问题 #25）

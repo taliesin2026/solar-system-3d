@@ -3205,14 +3205,32 @@ const _satAU  = new THREE.Vector3();
 function updateSatellites(dtDays){
   for(const b of satBodies){
     const pr = bodyRadius(b.parent.def.r);
-    // 显示轨道半径 = 母星显示半径 × aR，下限保证不被母星本体吞掉
-    const orbitR = Math.max(pr*b.aR, pr*1.9);
+    /* 显示轨道半径 = 母星显示半径 × aR（严格等比）。
+       ⚠ 原写法是 `Math.max(pr*b.aR, pr*1.9)`，那个 1.9 是"保证卫星不被母星本体
+         吞掉"的下限。但它有两个问题：
+           ① 与真实比例无关的**硬编码倍数**——一旦哪天加进来 aR<1.9 的卫星
+              （比如某颗紧贴母星的内环卫星），轨道会被静默拉远到假位置；
+           ② 对现有 19 颗卫星全是死代码：MOONS 表里最小 aR = 2.76（火卫一），
+              下限从未生效，注释却让人以为它在防某个真实风险。
+         现在直接 pr × aR。物理上也不会埋球：aR 的定义就是「半长轴 ÷ 母星赤道
+         半径」，所以 aR>1 即轨道在母星表面之外，19 颗全部满足（最小 2.76）。 */
+    const orbitR = pr * b.aR;
     if(dtDays) b.phase += (b.retro?-1:1) * (2*PI/b.per) * dtDays;
     const x = Math.cos(b.phase)*orbitR, z = Math.sin(b.phase)*orbitR;
     // 轨道倾角：holder 平面内绕 X 转 inc（与 holder 的母星倾角串成同一变换链）
     const ly = -b.si*z, lz = b.ci*z;
     b.grp.position.set(x, ly, lz);
-    b.grp.scale.setScalar(Math.max(bodyRadius(b.def.r), pr*0.02));
+    /* ⚠ 卫星尺寸改成**严格等比**（用户要求）：原来 `Math.max(bodyRadius(半径), pr*0.02)`
+       有一个「母星显示半径 ×0.02」的下限，是为了"压缩场景里小天体缩到看不见"。
+       但它会把小卫星放大到比例失真 —— 实测默认 ×1 档：
+         火卫二 真实 4.14e-6 → 显示 4.53e-5（**放大 10.9×**）
+         火卫一 真实 7.53e-6 → 显示 4.53e-5（放大 6.0×）
+         土卫一 真实 1.32e-4 → 显示 7.79e-4（放大 5.9×）
+         天卫五 1.62e-4 → 3.39e-4（2.1×）、土卫八 1.6×
+       这与"星球直径 1:1"的主口径自相矛盾，面板里的真实直径也对不上画面。
+       现在直接 bodyRadius(半径)，与行星/太阳/月球同一口径，比值严格真实。
+       代价：×1 档下这些卫星小于 1 像素（本来就这样），要看请拉大滑块。 */
+    b.grp.scale.setScalar(bodyRadius(b.def.r));
     b.mesh.rotation.y = b.phase;               // 潮汐锁定：自转 = 公转
     // 世界坐标 = 母星位置 + Rx(−母星倾角) 作用在局部偏移上
     const a = -b.parent.def.tilt*D2R, ca = Math.cos(a), sa = Math.sin(a);
@@ -4752,11 +4770,14 @@ function autoDistFor(b){
   let d = clampDist(r*mul);
   /* 有卫星系统的行星：取景距离至少把最外层卫星轨道包进来（约 2 倍），
      否则聚焦木星/土星时卫星几乎全在画面外，只能手动缩小去找。
-     卫星显示轨道半径 = max(pr·aR, pr·1.9)，与 updateSatellites 同一公式。
-     上限封在母星半径 ×25：土卫八在 59R，不封顶会把取景拉到几百单位外，
+     ⚠ 卫星显示轨道半径现在就是 `pr·aR`（严格等比，见 updateSatellites），
+        原来这里写 `max(pr·aR, pr·1.9)` 与实现脱节。那个 1.9 下限已删除
+        （实测最小 aR = 2.76，本来就不会生效），这里必须跟同一公式，
+        否则就是一处在注释里撒谎、改了 aR 也不会报错的隐患。
+        上限封在母星半径 ×25：土卫八在 59R，不封顶会把取景拉到几百单位外，
      反而连母星都看不清；×25 足够包进木卫四(26R) 与土卫六(20R)。 */
   if(b.moons && b.moons.length){
-    const maxOrbit = Math.max(...b.moons.map(m=>Math.max(r*m.aR, r*1.9)));
+    const maxOrbit = Math.max(...b.moons.map(m=>r*m.aR));
     d = clampDist(Math.min(Math.max(d, maxOrbit*2.0), r*25));
   }
   return d;
