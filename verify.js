@@ -930,9 +930,11 @@ if (S) {
        ③ 剩下的辉光仍然守住同一条尺寸约束。 */
   (function sunHaloCheck() {
     setJd(2026, 10, 13); clickEl('mReal'); S.update(0);
-    const MERC_PERIHELION = 30.75;      // 场景单位，README/评审同一口径
     const sunR = S.bodyRadius(695700);
-    const glowR = S.SUN_GLOW_BASE / 2;                 // Sprite 半边长
+    /* 辉光现在是 Sprite，scale = sunR × SUN_GLOW_RATIO，半边长 = 该值/2。
+       ⚠ 旧断言拿 `S.SUN_GLOW_BASE / 2` —— 那个绝对常数已删除（太阳半径不再恒定），
+         这里改成从场景里读实际 scale，不再依赖任何硬编码尺寸。 */
+    const glowR = S.sunGlow.scale.x / 2;
     const rings = [];
     S.sunGroup.traverse(o => { if (o.geometry && o.geometry.type === 'RingGeometry') rings.push(o); });
     ok('硬边日冕环已删除：太阳组里没有 RingGeometry', rings.length === 0,
@@ -940,11 +942,20 @@ if (S) {
     ok('删除 corona 没有连带炸掉 __solar 导出（对象字面量里不留悬空 const）',
         ('corona' in S) === false && !!S.sunGlow && !!S.scene,
         'corona in __solar = ' + ('corona' in S));
-    ok('太阳显示半径恒 17.14 单位（不再 ×2）', Math.abs(sunR - 17.14) < 0.05, sunR.toFixed(2));
-    ok('辉光半径 ≤ 水星近日点（不吞掉水星轨道）', glowR <= MERC_PERIHELION, `半径 ${glowR.toFixed(1)}`);
+    /* 严格等比（用户要求）：默认 ×1，太阳半径 = 695700km 的真实场景值 0.465 单位。
+       ⚠ 这条从"恒 17.14"改成"恒等于真实等比"——现在要钉的是比例正确性。 */
+    ok('太阳显示半径 = 真实等比（695700km，默认 ×1 时 0.465 单位）',
+        Math.abs(sunR - 695700 / S.AU_KM * S.SCENE_SCALE * S.sizeRef()) < 1e-9,
+        sunR.toFixed(4));
+    ok('辉光半径 = 太阳半径 × 1.57（跟着太阳等比，不再是 27 单位常数）',
+        Math.abs(glowR / sunR - S.SUN_GLOW_RATIO / 2) < 1e-9,
+        `辉光 ${glowR.toFixed(4)} / 日面 ${sunR.toFixed(4)} = ${(glowR / sunR).toFixed(3)}`);
     ok('辉光保留 depthTest（不穿透空间照亮夜面）',
         S.sunGlow.material.depthTest !== false, String(S.sunGlow.material.depthTest));
-    // 水星轨道必须整体在辉光之外
+    /* 水星轨道必须整体在辉光之外。严格等比下太阳 0.465、辉光 0.73，
+       水星近日点 30.75 —— 余量极大，默认档下必然成立。
+       ⚠ 把滑块拉大后太阳会吞掉内行星轨道（严格等比的必然结果，用户已确认），
+         所以这条只在默认 ×1 档断言，不拿满档去要求"不吞"。 */
     const merc = S.planetBodies.find(b => b.def.n === '水星');
     let minMerc = Infinity;
     for (let k = 0; k < 420; k += 7) {
@@ -955,9 +966,38 @@ if (S) {
       S.update(0);
       minMerc = Math.min(minMerc, merc.grp.position.length());
     }
-    ok('一年里水星轨道最近点仍在辉光之外', minMerc > glowR,
-        `水星最近 ${minMerc.toFixed(2)} > 辉光半径 ${glowR.toFixed(2)}`);
+    ok('默认 ×1 下一年里水星轨道最近点仍在辉光之外', minMerc > glowR,
+        `水星最近 ${minMerc.toFixed(2)} > 辉光半径 ${glowR.toFixed(3)}`);
     setJd(2026, 10, 13); S.update(0);
+  })();
+
+  /* 严格等比：所有天体的「显示半径 ÷ 真实半径」必须是同一个常数。
+     这是用户报的"相对大小与文字备注不匹配"的直接回归测试。 */
+  (function strictProportionalCheck() {
+    clickEl('mReal'); S.update(0);
+    const cases = [['太阳', 695700], ['水星', 2439.7], ['金星', 6051.8], ['地球', 6371],
+                   ['火星', 3389.5], ['木星', 69911], ['土星', 58232],
+                   ['天王星', 25362], ['海王星', 24622], ['冥王星', 1188.3]];
+    const ratios = cases.map(([n, km]) => ({ n, k: S.bodyRadius(km) / km }));
+    const k0 = ratios[0].k;
+    const bad = ratios.filter(r => Math.abs(r.k / k0 - 1) > 1e-12);
+    ok('10 个天体共用同一线性倍率（显示半径 ∝ 真实半径，严格等比）',
+        bad.length === 0, bad.map(r => `${r.n} ${(r.k / k0).toFixed(6)}`).join(' | ') || '全部一致');
+    // 逐对比值必须等于真实比值：拿用户最容易核对的组合钉住
+    const earth = S.bodyRadius(6371);
+    const pairs = [['木星/地球', S.bodyRadius(69911) / earth, 69911 / 6371],
+                   ['土星/地球', S.bodyRadius(58232) / earth, 58232 / 6371],
+                   ['水星/地球', S.bodyRadius(2439.7) / earth, 2439.7 / 6371],
+                   ['冥王星/地球', S.bodyRadius(1188.3) / earth, 1188.3 / 6371]];
+    const badPairs = pairs.filter(([, got, want]) => Math.abs(got - want) > 1e-9);
+    ok('木星/土星/水星/冥王星 相对地球的比值 === 真实比值（旧版偏差最大 165%）',
+        badPairs.length === 0,
+        badPairs.map(([n, got, want]) => `${n} 显示 ${got.toFixed(3)} vs 真实 ${want.toFixed(3)}`).join(' | ') ||
+        pairs.map(([n, got]) => `${n} ${got.toFixed(3)}`).join(' '));
+    /* 默认必须是 ×1（用户要求：默认不放大，要看大自己拉滑块） */
+    ok('「星球大小」默认倍率 = ×1（默认不放大）', S.sizeRef() === 1, '×' + S.sizeRef());
+    ok('默认 ×1 时地球显示半径 = 真实场景半径 0.00426 单位',
+        Math.abs(earth - 6371 / S.AU_KM * S.SCENE_SCALE) < 1e-12, earth.toFixed(6));
   })();
 
   // 取景：全览 vs 默认必须给出不同的机位（评审问题 #25）
@@ -1055,18 +1095,30 @@ if (S) {
       let v = '\0sentinel\0';                           // 强制第一次写入也被计数
       Object.defineProperty(l, 'innerHTML', { configurable: true, get: () => v, set: nv => { if (nv !== v) writes++; v = nv; } });
     });
-    // 虚拟时钟 60 帧 = 1 秒 → 默认流速 10 天/秒，地球自转目标约 60°/帧（必然触发限速）
+    /* 阶段 A：默认档（1 秒 = 1 小时）跑 60 帧 —— 日期每分钟才变一次，
+       这里量的是「写 DOM 前先比对缓存」这件事本身，与流速无关。 */
+    const dflt = $('sSpeed');
+    dflt.value = '160';
+    dflt.dispatch('input', { target: dflt, value: '160' });
     $('hDate').textContent = '';
     const geo0 = sceneGeoCount(), disp0 = disposedGeo.size;
     rafDrain(60);
     const geo1 = sceneGeoCount(), disp1 = disposedGeo.size;
     ok('60 帧主循环不新增场景几何体（轨道折线按需重建，评审问题 #39）', geo1 === geo0, `${geo0} → ${geo1}`);
     ok('60 帧不产生游离 dispose', disp1 - disp0 <= 20, `新增 ${disp1 - disp0}`);
-    ok('60 帧 innerHTML 写入 ≪ 每帧一次（评审问题 #50）',
+    ok('默认档 60 帧 innerHTML 写入 ≪ 每帧一次（评审问题 #50）',
         writes <= labels.length * 2, `写入 ${writes} 次 / 60 帧（每帧一次会是 ${labels.length * 60} 次）`);
     ok('静态核对：写 DOM 前确实先比对缓存文本', /if\(b\._ltxt!==txt\)/.test(mainCode));
     ok('跑完 60 帧日期读数仍在', /20\d\d-\d\d-\d\d/.test($('hDate').textContent), $('hDate').textContent);
-    ok('流速过快时 HUD 亮起「自转显示已限速」（评审问题 #47）',
+    /* 阶段 B：自转限速必须**显式把流速推到满档**才测。
+       ⚠ 默认流速改成 1 秒 = 1 小时后，地球每帧只转 0.015°，远低于
+         SPIN_STEP_CAP=14°，靠默认档永远触发不了限速。搭默认值的便车
+         会让这条断言在每次调默认流速时假失败一次。 */
+    const fast = $('sSpeed');
+    fast.value = '1000';
+    fast.dispatch('input', { target: fast, value: '1000' });
+    rafDrain(60);
+    ok('流速推到满档时 HUD 亮起「自转显示已限速」（评审问题 #47）',
         $('hSpin').classList.contains('on'), 'hSpin.on=' + $('hSpin').classList.contains('on'));
     // 把流速滑块推到最慢档再跑 60 帧：限速提示必须自己熄灭，写入次数也应塌下来
     const slow = $('sSpeed');
@@ -1078,9 +1130,9 @@ if (S) {
         $('hSpin').classList.contains('on') === false, 'hSpin.on=' + $('hSpin').classList.contains('on'));
     ok('最慢档 60 帧 innerHTML 写入 ≪ 每帧一次（评审问题 #50）',
         writes <= 12, `写入 ${writes} 次 / 60 帧`);
-    // 恢复默认档，别把流速状态留给后面的用例
-    slow.value = '500';
-    slow.dispatch('input', { target: slow, value: '500' });
+    // 恢复默认档（1 秒 = 1 小时 = 滑块 160），别把流速状态留给后面的用例
+    slow.value = '160';
+    slow.dispatch('input', { target: slow, value: '160' });
   })();
 
   /* willReadFrequently：这条只能这么测。

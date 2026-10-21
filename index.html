@@ -726,10 +726,10 @@
       <div class="btn" id="mLog" title="把轨道间距做对数压缩，九大天体一屏看得下（位置不再等比）">对数压缩</div>
     </div>
     <div class="grp" id="bSize">
-      <div class="row" style="margin-top:7px"><span>星球大小</span><span class="val" id="vSize">×1500</span></div>
-      <input type="range" id="sSize" min="0" max="1000" value="612"
+      <div class="row" style="margin-top:7px"><span>星球大小</span><span class="val" id="vSize">×1</span></div>
+      <input type="range" id="sSize" min="0" max="1000" value="0"
              role="slider" aria-label="星球大小倍数" aria-valuemin="0" aria-valuemax="1000"
-             aria-valuenow="612" tabindex="0">
+             aria-valuenow="0" tabindex="0">
     </div>
     <div class="ck" id="cTrueSize" tabindex="0" role="checkbox" aria-checked="false"
          title="按真实比例画星球（行星只有 1–2 像素）；开启后「星球大小」滑块失效"><i></i><span>真实星球大小</span></div>
@@ -737,7 +737,7 @@
          title="把月轨恢复成真实距离；因为真实地月距比夸大的地球半径还小，会自动连带打开「真实星球大小」"><i></i><span>月球真实距离</span></div>
   </div>
 
-  <div id="note">默认按<b>真实比例</b>摆放位置，但星球体积与月球距离被放大以便观看。真实尺度下地球只有 0.0003 像素——那才是真相。</div>
+  <div id="note">默认按<b>真实比例</b>摆放位置，星球直径同样是 <b>1:1 真实比例</b>（滑块 ×1，不放大）。真实尺度下地球只有 0.0003 像素——拉「星球大小」滑块才能看清楚。</div>
 </div>
 
 <!-- 底部横条：本轮重排后只剩**画面叠加层开关**（要不要画轨道线、标签、卫星……）
@@ -1193,15 +1193,20 @@ sunLight.position.set(0,0,0);
 scene.add(sunLight);
 
 /* ---------- 距离映射 ---------- */
-let distMode = 'real', sizeMul = 1500, trueSize = false;
+/* ⚠ 默认 1:1（用户要求）：不放大，画面里星球直径就是「1 AU = 100 单位」下的真实大小
+   （地球 0.00426 单位）。要看大必须自己拉「星球大小」滑块。
+   旧默认 ×1500 是幂律压缩时代的视觉折中；严格等比下不再需要，
+   而且替用户决定放大倍数会再次引入"画面与读数不符"的疑惑。 */
+let distMode = 'real', sizeMul = 1, trueSize = false;
 let moonReal = false;
-/* 太阳的显示尺寸参考点：滑块默认位置。太阳锁在这个值上，不随「星球大小」变化，
-   这样调行星直径时太阳（及它外面那层柔光辉光）绝对不跳变。见 bodyRadius。*/
+/* SUN_SIZE_REF 只作为历史上"太阳锁定的参考倍率"保留给导出/兼容，默认路径不再引用。 */
 const SUN_SIZE_REF = 1500;
-/* 太阳辉光**直径**（单位）。sprite 半径 = 此值/2 = 27，必须小于水星近日点
-   30.75 单位，否则整条水星轨道被辉光吞掉（评审问题 #41）。
-   与太阳实体 17.14 的比约 1.57× 直径，仍是"贴边的光晕"而不是中央一坨。 */
-const SUN_GLOW_BASE = 54;
+/* 太阳辉光**相对太阳半径的倍数**（直径）。
+   ⚠ 原来写死成 54 单位，是"太阳恒 17.14 单位"时代的常数。默认改成 1:1 之后
+     太阳半径只有 0.465 单位，54 单位的辉光会比太阳本身大 58 倍，内行星轨道
+     （水星近日点 30.75）全被光晕吞掉。改成本比例乘子后，辉光盘半径恒为
+     太阳半径的 1.57 倍，既贴着日面又不随倍率失控。 */
+const SUN_GLOW_RATIO = 3.14;                 // 辉光直径 / 太阳直径 ≈ 1.57× 半径
 const LOG_LO = Math.log10(0.00257), LOG_HI = Math.log10(39.5), LOG_SPAN = LOG_HI - LOG_LO;
 function mapAU(au){
   if(distMode === 'real') return au * SCENE_SCALE;
@@ -3297,11 +3302,13 @@ function buildGrid(){
     gridGroup.add(l);
   });
   /* 黄道轴：原来两条线从 ±R 直接穿过 (0,0,0)，等于在日面上画一条直线
-     （评审问题 #43 的 V6_sun_disc.png）。改成从太阳外围（辉光半径之外，
-     取 32 单位 > 辉光 27）起向外画，中间留空。
-     ⚠ 原来这里比的是"日冕外缘 28.35"——那一层硬边环已经整体删掉，
-     现在太阳外围只剩辉光 sprite，参照物换了但取整没变（仍是 32）。 */
-  const R = mapAU(42), IN = 32;
+     （评审问题 #43 的 V6_sun_disc.png）。改成从太阳外围起向外画、中间留空。
+     ⚠ 起点不能写死成 32 单位了：那是"太阳恒 17.14 单位、辉光半径 27"时代的
+       常数。默认 1:1 之后太阳半径只有 0.465、辉光半径 0.73，写死 32 会在
+       日心周围留出一个 32 单位的空洞（比对数来说等于屏幕上整块空掉）。
+       改为「太阳显示半径 × SUN_GLOW_RATIO」再留 20% 余量，任何倍率下都贴着
+       辉光外缘起画。 */
+  const R = mapAU(42), IN = Math.max(bodyRadius(SUN.r) * SUN_GLOW_RATIO * 1.2, 1e-4);
   const p=new Float32Array([ -R,GRID_Y,0, -IN,GRID_Y,0,  IN,GRID_Y,0, R,GRID_Y,0,
                               0,GRID_Y,-R, 0,GRID_Y,-IN, 0,GRID_Y,IN, 0,GRID_Y,R ]);
   const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p,3));
@@ -3739,35 +3746,17 @@ const _earthEcl = {x:1, y:0, z:0};       // 地球真实日心黄道向量（AU�
 function bodyRadius(km){
   const real = km/AU_KM*SCENE_SCALE;
   if(trueSize) return real;
-  /* 真实半径极小（地球 0.0043 单位），用幂律压缩后再按sizeMul 缩放。
-     压缩指数 0.42 是为**行星**整体观感调的：地球 0.0043 → 2.39是可看的球。 */
-  /* 太阳不吃「星球大小」滑块：滑块语义是「行星直径」，恒星不该跟着缩。
-     原来太阳走同一条 pow(sizeMul,0.58) 通路，导致：
-       ① 调滑块时太阳辉光/日冕跟着一起变 —— 用户明确指出的问题；
-       ② 滑块拉满时太阳暴涨到盖住内行星轨道。
-     现在把太阳的 sizeMul 锁在 SUN_SIZE_REF（= 默认滑块位置 1500），
-     半径恒为 17.14 单位（评审问题 #41：原来还额外 ×2 = 34.28，
-     几乎等于水星近日点轨道半径 30.75，整条水星轨道被日面盖住）。 */
-  const mul = km > 1e5 ? SUN_SIZE_REF : sizeMul;
-  const r = Math.pow(real, 0.42) * Math.pow(mul, 0.58) * 0.34;
-  /* 太阳必须额外放大，否则看起来比地球还小。
-     为什么不能用「给太阳改压缩指数」的办法——试过，数学上不成立：
-     幂律压缩对所有天体同时生效，太阳 real=0.465 与地球 real=0.00426
-     相差 109倍，但压缩后只剩 7.2倍（109^0.42=7.2）。而且real<1 时
-     指数越大结果**反而越小**（0.465^0.62 < 0.465^0.42），
-     调大指数会让太阳更小——方向是反的。指数从 0.42 调到 0.18 也只能
-     把比值从 7.2 拉到 8.6，杯水车薪。幂函数压不出109倍的量级差。
-     ⚠ 但**放大系数不能按观感随便给**（评审问题 #41/#42）：
-       ×2.0 时太阳半径 34.3 = 水星轨道(38.7) 的 89%，日冕外缘 57.8、
-       辉光半径 50 —— 水星**整条轨道**（近日点 30.75）都被吞在辉光盘里，
-       聚焦内行星时相机又落进日冕环内部，画面上半部是一块灰色挡板。
-     约束应该反过来写：辉光半径必须 < 水星近日点 30.75
-     （原先还要同时管住"日冕外缘"，那一层硬边环后来整体删了，见上面的注释）。
-       ×1.0 → 太阳半径 17.14（= README 记录的固定值），
-       辉光半径 27，落在 30.75 以内；太阳/地球仍 7.2×（压缩后的自然比值），
-       比真实 109× 小得多，但这套场景本来就是「压缩示意」而非等比。 */
-  if(km > 1e5) return r;            // 太阳：不加额外系数，见上
-  return r;
+  /* ⚠ 严格等比（用户要求）：所有天体共用同一个线性倍率，相对大小 === 真实相对大小。
+     旧实现是 `pow(real, 0.42) * pow(mul, 0.58) * 0.34` 的幂律压缩，
+     它把大天体压小、小天体放大 —— 实测木星只剩地球的 2.7 倍（真实 11 倍）、
+     冥王星却有 0.49 倍（真实 0.19 倍），画面与面板里的真实直径读数打架。
+     幂律压缩下 sizeMul 只做整体等比，所以那个误差换任何倍率都不消失。
+     现在：R = real × sizeMul，比值恒等于 km 之比，与倍率无关。
+     ⚠ 代价（用户已知情并选择"全部严格等比，含太阳"）：太阳真实半径是
+       水星的 285 倍、地球的 109 倍，因此太阳会包住水星/金星的轨道。
+       这不是 bug，是严格等比的必然结果；下拉流速/缩小滑块或打开
+       「真实星球大小」都能看到同一套比例。 */
+  return real * sizeMul;
 }
 function update(dt, now){
   const dtDays = paused ? 0 : rate*dir*dt;
@@ -3781,18 +3770,14 @@ function update(dt, now){
   sunBody.auScene.set(0,0,0);
   sunBody.trueAU = 0;                 // 标签用：真实日心距离（AU），与显示映射无关
   advanceSpin(sunBody, jd*360/(SUN.rot||25.38));
-  /* 辉光（评审问题 #41/#42）：
-     原值 sunR=34.28（= ×2.0 放大）、辉光 sprite 半径 50、日冕环外缘 57.84，
-     而水星**近日点只有 30.75 单位** —— 水星整条轨道都在辉光盘里，
-     日冕环还横穿它；聚焦内行星时相机落进环内，屏幕上是一整块灰色挡板。
-     修正：太阳不再额外 ×2.0（半径回到 README 写的 17.14，= 水星轨道的 44%），
-     辉光半径 27，压到水星近日点 30.75 以内。
-     ⚠ 硬边日冕环已经整体删掉（见太阳材质那段的注释），所以这里
-     只剩一个尺寸要守：`SUN_GLOW_BASE/2 < 水星近日点`。
-     辉光是 Sprite、尺寸与 scale 一一对应（不像 RingGeometry 那样
-     外缘还要再乘 1.35），原来 clamp(...,10,21) 那种"看着在限内、
-     实际画到 28.35"的坑不会再出现。 */
-  sunGlow.scale.setScalar(SUN_GLOW_BASE);
+  /* 辉光：**跟着太阳半径等比缩放**（用户要求默认 1:1 之后必须这样）。
+     ⚠ 旧写法是 `sunGlow.scale.setScalar(SUN_GLOW_BASE)`，SUN_GLOW_BASE=54 是
+       "太阳恒 17.14 单位"时代的绝对常数。太阳一旦回到真实比例（默认 1:1 时
+       半径只有 0.465 单位），54 单位的辉光会比日面大 58 倍，把水星近日点
+       （30.75）以内的整片区域糊成一块光斑。
+     现在辉光直径 = 太阳直径 × SUN_GLOW_RATIO（≈1.57× 半径），
+     任何倍率下都只是"贴着日面的一圈柔光"，不会失控。 */
+  sunGlow.scale.setScalar(sunR * SUN_GLOW_RATIO);
 
   // 行星
   planetBodies.forEach((b,i)=>{
@@ -4419,11 +4404,12 @@ function applyPendingSize(){
   return true;
 }
 (function(){
-  /* 默认位置对应 ×1500。⚠ markup 里 `value="612"` 只是 JS 跑之前的占位值，
-     真正生效的是这里算出来的 want（≈739），别按 612 反推倍率。 */
-  const want = Math.round(Math.log(1500)/Math.log(SIZE_BASE)*1000);
+  /* 默认位置对应 ×1 —— 即 1:1 真实比例，默认不放大（用户要求）。
+     sliderToSize 是 20000^(v/1000) 的对数映射，×1 落在 v=0。
+     ⚠ markup 里的 `value="612"` 只是 JS 跑之前的占位值，不要按它反推倍率。 */
+  const want = 0;
   sSize.value = want;
-  sizeMul = 1500;
+  sizeMul = 1;
   sSize.style.setProperty('--p', want/10+'%');
   document.getElementById('vSize').textContent = fmtSize(sizeMul);
 })();
@@ -5316,13 +5302,19 @@ window.__solar = {
   bodies, sunBody, moonBody, planetBodies, camera, controls, renderer, scene,
   select, resetView, update, refreshInfo, TEX, PHYS, ATMOS, EARTH_LAND, ALBEDO_TEX,
   gridGroup, distModeRef:()=>distMode, ZOOM_MIN, ZOOM_MAX, bodyRadius,
+  /* 等比换算要用到的两个常量：验证脚本据此从页面读，而不是另抄一份
+     （抄的那份改名后不会报错，只会假绿）。 */
+  AU_KM, SCENE_SCALE, sizeRef:()=>sizeMul,
   /* ⚠ `corona` 已经不在这里了：日冕环整个对象删掉之后，导出列表里再留一个
      `corona` 就是引用一个不存在的 const —— 对象字面量求值当场 ReferenceError，
      **整个 __solar 挂不上**，验证脚本全线 undefined（这个坑踩过一次，见上面
      setAutoDist 的注释）。删除一个 mesh 时，记得同时查：创建、每帧 scale、
      导出、README/注释里的尺寸约束。 */
   sunGroup, sunGlow,
-  SUN_GLOW_BASE, SUN_SIZE_REF,
+  /* ⚠ `SUN_GLOW_BASE` 已随"辉光按太阳半径等比"的改造删除：太阳半径不再恒定，
+     辉光尺寸改为 sunR × SUN_GLOW_RATIO。导出里必须换成真实存在的符号，
+     否则对象字面量求值当场 ReferenceError，整个 __solar 都挂不上。 */
+  SUN_GLOW_RATIO, SUN_SIZE_REF,
   /* 旧的 MOON_LOOK / MOON_DAY / moonSystems 三件套已随卫星重构删除。
      把它们留在导出对象里 = 初始化时 ReferenceError，整个 __solar 都不会挂载
      （const 声明不存在，对象字面量求值就会抛）。这里只导出真实存在的符号。 */
